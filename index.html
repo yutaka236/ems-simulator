@@ -1,0 +1,1612 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1,user-scalable=no"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>バイタルシミュレーター</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="バイタル">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="theme-color" content="#04080a">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Noto+Sans+JP:wght@400;500;700&display=swap">
+<style>
+/* Layout: 投影用のベッドサイドモニター。左に心電図とSpO2脈波、右に4つの数値タイル、上にリズム名と警報。
+   常に暗色（投影で視認しやすい黒地）。数値は大きく、色は項目ごとに固定。 */
+:root {
+  --bg: #04080a;
+  --panel: #091216;
+  --line: #17292f;
+  --grid: rgba(120, 190, 180, 0.07);
+  --grid2: rgba(120, 190, 180, 0.15);
+  --fg: #e9f4f1;
+  --dim: #7b959b;
+  --hr: #4dff8a;
+  --spo2: #3fd8ff;
+  --bp: #ff7466;
+  --temp: #ffcf3a;
+  --etco2: #c58bff;
+  --alarm: #ff2f41;
+  --alarm-bg: #4a0c14;
+  --font-num: 'Barlow Condensed', 'Arial Narrow', 'Roboto Condensed', sans-serif;
+  --font-ui: 'Noto Sans JP', 'Hiragino Sans', 'Yu Gothic', Meiryo, system-ui, sans-serif;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-ui);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 10px;
+  overflow: hidden;
+}
+body.idle, body.idle * { cursor: none; }
+body { touch-action: manipulation; -webkit-tap-highlight-color: transparent; -webkit-user-select: none; user-select: none; }
+.hbtn { appearance: none; background: transparent; border: 1px solid #2b434a; color: var(--dim); font: inherit; font-size: 0.85em; padding: 3px 12px; cursor: pointer; }
+.hbtn:hover { color: var(--fg); border-color: var(--dim); }
+@media (pointer: coarse) { .hbtn { min-height: 44px; padding: 6px 18px; } }
+
+.monitor {
+  height: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) clamp(300px, 31vw, 620px);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-areas: "top top" "traces tiles" "keys keys";
+  gap: 12px;
+}
+
+/* ---------- header ---------- */
+.top { grid-area: top; display: flex; align-items: center; gap: 20px; min-width: 0; }
+.rhythm { min-width: 0; }
+.rname { font-size: clamp(22px, 4.4vh, 58px); font-weight: 700; line-height: 1.15; text-wrap: balance; }
+.ren { font-size: clamp(12px, 1.9vh, 22px); color: var(--dim); letter-spacing: 0.04em; margin-top: 2px; }
+.alarms { flex: 1; display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; justify-content: center; }
+.chip {
+  background: var(--alarm); color: #fff; font-weight: 700;
+  font-size: clamp(14px, 2.6vh, 30px); padding: 0.12em 0.7em; letter-spacing: 0.04em;
+  animation: chipblink 1s steps(1) infinite;
+}
+.meta { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; color: var(--dim); font-size: clamp(12px, 1.9vh, 22px); }
+#clock { font-family: var(--font-num); font-size: clamp(20px, 3.4vh, 42px); color: var(--fg); font-variant-numeric: tabular-nums; letter-spacing: 0.04em; }
+
+/* ---------- traces ---------- */
+.traces { grid-area: traces; display: grid; grid-template-rows: minmax(0, 1.9fr) minmax(0, 1fr) auto; gap: 10px; min-width: 0; }
+.panel { position: relative; background: var(--panel); border: 1px solid var(--line); min-width: 0; min-height: 0; }
+.panel canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.tag { position: absolute; left: 14px; top: 10px; z-index: 1; font-family: var(--font-num); font-weight: 600; font-size: clamp(16px, 2.6vh, 30px); letter-spacing: 0.06em; }
+.tag small { color: var(--dim); font-weight: 500; margin-left: 0.8em; font-size: 0.7em; }
+.ecg .tag { color: var(--hr); }
+.pleth .tag { color: var(--etco2); }
+
+/* ---------- tiles ---------- */
+.tiles { grid-area: tiles; display: grid; grid-template-rows: repeat(5, minmax(0, 1fr)); gap: 10px; min-width: 0; }
+.tile {
+  container-type: size; position: relative; display: flex; flex-direction: column;
+  padding: 10px 16px 6px; background: var(--panel); border: 1px solid var(--line);
+  color: var(--c); user-select: none; cursor: pointer; min-width: 0;
+}
+.tile.hr { --c: var(--hr); }
+.tile.spo2 { --c: var(--spo2); }
+.tile.bp { --c: var(--bp); }
+.tile.temp { --c: var(--temp); }
+.tile.etco2 { --c: var(--etco2); }
+.tile.sel { outline: 3px solid var(--c); outline-offset: -3px; }
+.tile.alarm { animation: tilealarm 1s steps(1) infinite; }
+.lab { display: flex; align-items: baseline; gap: 10px; font-size: clamp(14px, 13cqh, 28px); line-height: 1.1; white-space: nowrap; }
+.lab b { font-weight: 700; }
+.lab i { font-style: normal; font-size: 0.68em; letter-spacing: 0.08em; opacity: 0.8; }
+.lab .hint { font-size: 0.6em; color: var(--fg); opacity: 0.85; margin-left: 6px; overflow: hidden; text-overflow: ellipsis; }
+.lab .unit { margin-left: auto; color: var(--dim); font-size: 0.72em; }
+.val {
+  flex: 1; min-height: 0; display: flex; align-items: center; justify-content: flex-end;
+  font-family: var(--font-num); font-weight: 600; line-height: 1; letter-spacing: 0.01em;
+  font-size: min(68cqh, 36cqw); font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.bp .val { font-size: min(58cqh, 21cqw); }
+.val .sl { opacity: 0.55; margin: 0 0.04em; }
+.val [data-k] { display: inline-block; min-width: 1.5em; padding: 0 0.1em; text-align: center; cursor: pointer; }
+.val .selp { background: color-mix(in srgb, currentColor 16%, transparent); outline: 0.04em solid currentColor; outline-offset: 0.02em; }
+.entering::after { content: ''; display: inline-block; width: 0.07em; height: 0.78em; background: currentColor; margin-left: 0.06em; animation: chipblink 1s steps(1) infinite; }
+.heart { position: absolute; left: 16px; bottom: 14px; width: clamp(22px, 8cqh, 40px); height: auto; color: var(--hr); transform-origin: center; }
+
+/* ---------- 解析・除細動 ---------- */
+.ctrl { display: flex; flex-wrap: wrap; align-items: stretch; gap: 10px; min-width: 0; }
+.cbtn {
+  appearance: none; font-family: var(--font-ui); font-weight: 700; font-size: clamp(18px, 3.4vh, 40px);
+  min-height: clamp(54px, 9vh, 100px); padding: 0 clamp(16px, 2vw, 36px); border: 2px solid var(--c);
+  background: transparent; color: var(--c); cursor: pointer; display: flex; align-items: center; gap: 0.6em;
+  letter-spacing: 0.08em; white-space: nowrap;
+}
+.cbtn kbd { margin: 0; font-size: 0.45em; letter-spacing: 0; }
+.cbtn.an { --c: var(--spo2); }
+.cbtn.sh { --c: var(--temp); }
+.cbtn:hover:not(:disabled) { background: color-mix(in srgb, var(--c) 18%, transparent); }
+.cbtn:disabled { opacity: 0.3; cursor: not-allowed; }
+.cbtn.sh.ready { background: var(--c); color: #1a1300; opacity: 1; animation: readypulse 0.9s steps(1) infinite; }
+.cbtn.sh.ready kbd { color: #1a1300; border-color: #1a1300; background: transparent; }
+.cmsg { flex: 1 1 14em; min-width: min(14em, 100%); display: flex; flex-direction: column; justify-content: center; gap: 6px; font-size: clamp(16px, 3.1vh, 38px); font-weight: 700; line-height: 1.25; }
+.cmsg.idle { color: var(--dim); font-weight: 500; font-size: clamp(14px, 2.2vh, 26px); }
+.cmsg.busy { color: var(--fg); }
+.cmsg.shock { color: var(--temp); }
+.cmsg.cpr { color: var(--spo2); }
+.cmsg.warn { color: var(--alarm); }
+.cbar { height: 8px; background: var(--line); }
+.cbar i { display: block; height: 100%; width: 0; background: currentColor; }
+.cmsg.idle .cbar, .cmsg.cpr .cbar, .cmsg.warn .cbar { visibility: hidden; }
+.flash { position: fixed; inset: 0; background: #fff; opacity: 0; pointer-events: none; z-index: 15; }
+.toast { position: fixed; left: 50%; bottom: calc(56px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: #12242a; border: 1px solid #2b434a; padding: 10px 22px; font-size: 20px; z-index: 30; }
+@keyframes readypulse { 0%, 100% { filter: none; } 50% { filter: brightness(0.62); } }
+@media (prefers-reduced-motion: reduce) { .cbtn.sh.ready { animation: none; } }
+
+/* hidden state (起動時はすべて非表示) */
+.tile.off .sl, .tile.off .heart { visibility: hidden; }
+.panel.off canvas, .panel.off .tag { visibility: hidden; }
+
+/* ---------- footer ---------- */
+.keys { grid-area: keys; display: flex; flex-wrap: wrap; gap: 6px 18px; color: var(--dim); font-size: clamp(11px, 1.6vh, 18px); min-width: 0; }
+kbd {
+  font-family: var(--font-ui); font-size: 0.92em; color: var(--fg); border: 1px solid #2b434a;
+  padding: 0 0.45em; margin-right: 0.35em; background: #0c1a1f;
+}
+
+/* ---------- help overlay ---------- */
+.help { position: fixed; inset: 0; z-index: 20; background: rgba(2, 6, 8, 0.94); overflow-y: auto;
+  padding: max(24px, env(safe-area-inset-top, 0px)) max(24px, env(safe-area-inset-right, 0px)) 24px max(24px, env(safe-area-inset-left, 0px)); }
+.help-in { max-width: 1100px; margin: 0 auto; display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 28px 40px; }
+.help h2 { margin: 0 0 10px; font-size: 18px; color: var(--dim); font-weight: 500; letter-spacing: 0.08em; }
+.help ul li { display: block; line-height: 1.65; }
+.help li b { color: var(--hr); }
+.help kbd { margin-right: 0.25em; }
+.help .title { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: baseline; gap: 16px; }
+.help .title strong { font-size: 26px; }
+.help ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; font-size: 17px; }
+.help li { display: flex; align-items: baseline; gap: 10px; }
+.rbtn { all: unset; display: flex; align-items: baseline; gap: 12px; padding: 7px 12px; border: 1px solid var(--line); cursor: pointer; font-size: 17px; width: 100%; background: var(--panel); }
+.rbtn:hover { border-color: var(--hr); }
+.rbtn.on { border-color: var(--hr); color: var(--hr); }
+.rbtn kbd { margin: 0; }
+
+@keyframes chipblink { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+@keyframes tilealarm { 0% { background: var(--alarm-bg); } 50% { background: var(--panel); } }
+@media (prefers-reduced-motion: reduce) {
+  .chip, .entering::after { animation: none; }
+  .tile.alarm { animation: none; background: var(--alarm-bg); }
+}
+
+/* ---------- narrow screens ---------- */
+@media (max-width: 820px) {
+  body { overflow-y: auto; overflow-x: hidden; }
+  .monitor { height: auto; grid-template-columns: minmax(0, 1fr); grid-template-areas: "top" "traces" "tiles" "keys"; }
+  .top { flex-wrap: wrap; gap: 8px 16px; }
+  .alarms { justify-content: flex-start; flex-basis: 100%; order: 3; }
+  .traces { height: auto; grid-template-rows: 48vw 28vw auto; }
+  .ctrl { flex-wrap: wrap; }
+  .cmsg { flex-basis: 100%; }
+  .tiles { grid-template-columns: 1fr 1fr; grid-template-rows: none; grid-auto-rows: 40vw; }
+  .tile.bp { grid-column: 1 / -1; }
+  .tile { padding: 8px 12px 4px; }
+}
+
+/* ---------- タッチ操作（iPad）：テンキー・選択パネル ---------- */
+html, body { overscroll-behavior: none; }
+@supports (height: 100dvh) { html, body { height: 100dvh; } }
+body { -webkit-touch-callout: none; }
+.mbtns { display: flex; gap: 8px; }
+.tile.pressing, .panel.pressing { filter: brightness(1.3); outline: 3px solid var(--c, #7b959b); outline-offset: -3px; }
+.panel.ecg { --c: var(--hr); } .panel.pleth { --c: var(--etco2); }
+.panel.ecg, .panel.pleth { cursor: pointer; }
+@media (pointer: coarse) {
+  .keys { display: none; }
+  .cbtn kbd { display: none; }
+  .lab .hint { display: none; }
+}
+
+.tb {
+  appearance: none; font: 700 clamp(17px, 2.7vh, 26px) var(--font-ui); color: var(--fg);
+  background: #10222a; border: 1px solid #33505a; min-height: 48px; padding: 0 14px;
+  display: flex; align-items: center; justify-content: center; gap: 0.5em; text-align: center;
+  cursor: pointer; touch-action: manipulation;
+}
+.tb:active { background: color-mix(in srgb, var(--c, #7b959b) 32%, #10222a); }
+.tb.on { color: var(--c, var(--hr)); border-color: var(--c, var(--hr)); background: color-mix(in srgb, var(--c, var(--hr)) 14%, #0b171c); }
+.tb:disabled { opacity: 0.28; }
+.tb .st { font-size: 0.7em; opacity: 0.85; }
+.tb.xs { min-height: 40px; padding: 0 14px; margin-left: auto; font-size: 18px; }
+.tb.ok { background: var(--c, var(--hr)); border-color: var(--c, var(--hr)); color: #04080a; }
+.tb.danger { color: var(--alarm); border-color: var(--alarm); }
+
+.sheet {
+  position: fixed; z-index: 25; background: #0b171c; border: 2px solid var(--c, #33505a);
+  box-shadow: 0 12px 44px rgba(0, 0, 0, 0.65); color: var(--fg);
+  display: flex; flex-direction: column; gap: 10px; padding: 12px; overflow: auto;
+  max-height: calc(100vh - 16px); max-height: calc(100dvh - 16px);
+}
+.sh-h { display: flex; align-items: baseline; gap: 10px; font-size: 22px; color: var(--c, var(--fg)); }
+.sh-h b { font-size: 1.15em; }
+.sh-h .u { color: var(--dim); font-size: 0.75em; }
+
+.sheet.num {
+  left: max(12px, env(safe-area-inset-left, 0px)); bottom: max(12px, env(safe-area-inset-bottom, 0px));
+  width: min(440px, calc(100vw - 24px));
+}
+.np-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.np-tabs .tb { justify-content: space-between; }
+.np-tabs .tb b { font-family: var(--font-num); font-size: 1.5em; font-weight: 600; }
+.np-disp {
+  display: flex; align-items: center; justify-content: flex-end; min-height: clamp(52px, 8vh, 76px);
+  font-family: var(--font-num); font-weight: 600; font-size: clamp(44px, 7.5vh, 72px); line-height: 1;
+  padding: 4px 14px; background: #04080a; border: 1px solid var(--line); color: var(--c);
+  font-variant-numeric: tabular-nums;
+}
+.np-disp.cur { opacity: 0.55; }
+.np-main { display: grid; grid-template-columns: 3fr 1fr; gap: 8px; }
+.np-pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.np-pad .tb { font-family: var(--font-num); font-size: clamp(28px, 4.6vh, 44px); min-height: clamp(44px, 6.6vh, 64px); }
+.np-step { display: grid; grid-template-rows: repeat(4, 1fr); gap: 8px; }
+.np-step .tb { padding: 0; min-height: 0; font-family: var(--font-num); font-size: clamp(22px, 3.6vh, 34px); touch-action: none; }
+.np-act { display: grid; grid-template-columns: 1fr 1fr 1.2fr; gap: 8px; }
+
+.backdrop {
+  position: fixed; inset: 0; z-index: 24; background: rgba(0, 0, 0, 0.6);
+  display: flex; align-items: center; justify-content: center; padding: 12px;
+}
+.sheet.modal { position: relative; width: min(760px, 100%); }
+.mrow { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
+.mh { color: var(--dim); font-size: 15px; letter-spacing: 0.08em; margin-top: 4px; }
+.rgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.rgrid .tb { flex-direction: column; align-items: flex-start; justify-content: center; gap: 2px; min-height: 64px; text-align: left; font-size: clamp(17px, 2.6vh, 24px); }
+.rgrid .tb small { font-weight: 500; color: var(--dim); font-size: 0.62em; }
+.rgrid .tb.on small { color: inherit; opacity: 0.8; }
+
+@media (max-width: 820px) {
+  .sheet.num { left: 50%; transform: translateX(-50%); width: min(520px, calc(100vw - 16px)); }
+  body.numopen { padding-bottom: 560px; }
+  .rgrid { grid-template-columns: 1fr; }
+}
+</style>
+
+<div class="monitor" id="monitor">
+  <header class="top">
+    <div class="rhythm">
+      <div class="rname" id="rname">洞調律</div>
+      <div class="ren" id="ren">Sinus Rhythm</div>
+    </div>
+    <div class="alarms" id="alarms" aria-live="polite"></div>
+    <div class="meta"><span id="clock">--:--:--</span><span id="snd">音 OFF</span><div class="mbtns"><button type="button" class="hbtn" id="mOpen">☰ メニュー</button><button type="button" class="hbtn" id="hOpen">? ヘルプ</button></div></div>
+  </header>
+
+  <main class="traces">
+    <section class="panel ecg"><span class="tag">II<small>25 mm/s　10 mm/mV</small></span><canvas id="cEcg"></canvas></section>
+    <section class="panel pleth"><span class="tag">CO₂<small>カプノグラム　0–60 mmHg</small></span><canvas id="cPl"></canvas></section>
+    <section class="ctrl" id="ctrl">
+      <button id="bAnalyze" class="cbtn an" type="button"><span>解析</span><kbd>K</kbd></button>
+      <button id="bShock" class="cbtn sh" type="button" disabled><span>除細動</span><kbd>D</kbd></button>
+      <div class="cmsg idle" id="cmsg" aria-live="polite"><div id="ctext"></div><div class="cbar"><i id="cfill"></i></div></div>
+    </section>
+  </main>
+
+  <aside class="tiles">
+    <div class="tile hr" data-tile="hr" data-k="hr">
+      <div class="lab"><b>脈拍</b><i>PULSE</i><span class="hint" id="hHr"></span><span class="unit">/min</span></div>
+      <div class="val"><span id="vHr">75</span></div>
+      <svg class="heart" id="heart" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 21C5 15.5 2 12 2 8.5 2 5.5 4.3 3.5 7 3.5c2 0 3.8 1.2 5 3 1.2-1.8 3-3 5-3 2.7 0 5 2 5 5 0 3.5-3 7-10 12.5z"/></svg>
+    </div>
+    <div class="tile spo2" data-tile="spo2" data-k="spo2">
+      <div class="lab"><b>SpO₂</b><i>酸素飽和度</i><span class="hint" id="hSpo2"></span><span class="unit">%</span></div>
+      <div class="val"><span id="vSpo2">98</span></div>
+    </div>
+    <div class="tile bp" data-tile="bp" data-k="sys">
+      <div class="lab"><b>血圧</b><i>NIBP</i><span class="hint" id="hBp"></span><span class="unit" id="uBp">mmHg</span></div>
+      <div class="val"><span id="vSys" data-k="sys">120</span><span class="sl">/</span><span id="vDia" data-k="dia">80</span></div>
+    </div>
+    <div class="tile temp" data-tile="temp" data-k="temp">
+      <div class="lab"><b>体温</b><i>TEMP</i><span class="hint" id="hTemp"></span><span class="unit">℃</span></div>
+      <div class="val"><span id="vTemp">36.6</span></div>
+    </div>
+    <div class="tile etco2" data-tile="etco2" data-k="etco2">
+      <div class="lab"><b>EtCO₂</b><i>呼気終末CO₂</i><span class="hint" id="hEtco2"></span><span class="unit">mmHg</span></div>
+      <div class="val"><span id="vEtco2">38</span></div>
+    </div>
+  </aside>
+
+</div>
+
+<div class="sheet num" id="shNum" hidden role="dialog" aria-label="数値入力">
+  <div class="sh-h"><b id="npName"></b><span class="u" id="npUnit"></span><button type="button" class="tb xs" id="npX" aria-label="閉じる">✕</button></div>
+  <div class="np-tabs" id="npTabs" hidden>
+    <button type="button" class="tb" id="npTsys"><span>収縮期</span><b id="npVsys"></b></button>
+    <button type="button" class="tb" id="npTdia"><span>拡張期</span><b id="npVdia"></b></button>
+  </div>
+  <div class="np-disp" id="npDisp"></div>
+  <div class="np-main"><div class="np-pad" id="npPad"></div><div class="np-step" id="npStep"></div></div>
+  <div class="np-act">
+    <button type="button" class="tb" id="npVis">表示中</button>
+    <button type="button" class="tb" id="npCancel">取消</button>
+    <button type="button" class="tb ok" id="npOk">確定</button>
+  </div>
+</div>
+
+<div class="backdrop" id="shModal" hidden>
+  <div class="sheet modal" role="dialog">
+    <div class="sh-h"><b id="mTitle"></b><button type="button" class="tb xs" id="mX" aria-label="閉じる">✕</button></div>
+    <div id="shRh" style="display:flex;flex-direction:column;gap:10px">
+      <div class="mrow"><button type="button" class="tb" id="rhEcg"></button><button type="button" class="tb" id="rhName"></button></div>
+      <div class="mh">リズム（タップで切り替え）</div>
+      <div class="rgrid" id="rgrid"></div>
+    </div>
+    <div id="shMenu" style="display:flex;flex-direction:column;gap:10px">
+      <div class="mrow" id="mItems"></div>
+      <div class="mh">除細動後の結果</div>
+      <div class="mrow" id="mOut"></div>
+    </div>
+    <div id="shLink" style="display:flex;flex-direction:column;gap:12px">
+      <div id="lkChoose" style="display:flex;flex-direction:column;gap:12px">
+        <div style="color:var(--dim);font-size:16px;line-height:1.6">この端末の役割を選んでください。<br>iPadを表示側、iPhoneをリモコンにします。</div>
+        <div class="mrow"><button type="button" class="tb" id="lkAsHost" style="min-height:84px">表示側にする<br><span style="font-size:0.7em;font-weight:500">iPad（投影する画面）</span></button><button type="button" class="tb" id="lkAsRemote" style="min-height:84px">リモコンにする<br><span style="font-size:0.7em;font-weight:500">iPhone</span></button></div>
+      </div>
+      <div id="lkHost" hidden style="display:flex;flex-direction:column;gap:12px">
+        <div class="np-disp" id="lkCode" style="font-size:clamp(40px,8vh,72px);letter-spacing:0.2em;justify-content:center">------</div>
+        <div id="lkState" style="font-size:20px;font-weight:700;min-height:1.6em"></div>
+        <div id="lkHow" style="color:var(--dim);font-size:16px;line-height:1.6"></div>
+        <div id="lkUrl" style="word-break:break-all;color:var(--spo2);font-size:15px"></div>
+        <div class="mrow"><button type="button" class="tb" id="lkShare">アドレスをiPhoneに送る</button><button type="button" class="tb danger" id="lkStop">接続を終了</button></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<iframe id="rmFrame" hidden title="リモコン" style="position:fixed;inset:0;width:100%;height:100%;border:0;z-index:40;background:#04080a"></iframe>
+<div class="flash" id="flash" aria-hidden="true"></div>
+<div class="toast" id="toast" hidden></div>
+
+<div class="help" id="help" hidden role="dialog" aria-label="使い方">
+  <div class="help-in">
+    <div class="title"><strong>使い方</strong><button type="button" class="hbtn" id="hClose">閉じる</button></div>
+    <div>
+      <h2>表示と数値の変更</h2>
+      <ul>
+        <li><b>タップ</b>：脈拍・SpO₂・血圧・体温・EtCO₂・心電図・カプノグラムの表示／非表示を切り替える</li>
+        <li><b>長押し</b>（脈拍・SpO₂・血圧・体温）：テンキーが開く。数字を入力して「確定」</li>
+        <li>テンキー右の＋／−は、押し続けると連続で変わる</li>
+        <li>血圧は、長押しした位置（左＝収縮期、右＝拡張期）が選ばれる。テンキー上の「収縮期／拡張期」でも切り替えられる</li>
+        <li>起動時はすべて非表示。非表示のままでも値を準備できる</li>
+      </ul>
+      <h2 style="margin-top:24px">心電図のリズム</h2>
+      <ul>
+        <li>心電図を<b>長押し</b>すると、リズムの一覧が開く。選ぶとすぐに切り替わる</li>
+        <li>同じ画面で、リズム名の表示／非表示を切り替えられる</li>
+      </ul>
+    </div>
+    <div>
+      <h2>解析と除細動</h2>
+      <ul>
+        <li>「解析」をタップ。表示中の波形に関係なく、現在のリズムを解析する（約5秒）</li>
+        <li>心室頻拍・心室細動なら「除細動が必要」と判断して充電（約3秒）し、除細動を指示する</li>
+        <li>それ以外なら「除細動は不要。反応がなければ胸骨圧迫」と指示する</li>
+        <li>充電完了の指示が出たら、「除細動」をタップ</li>
+        <li>除細動後の結果は、メニューで選ぶ（画面には出ない）</li>
+      </ul>
+      <h2 style="margin-top:24px">メニュー（右上）</h2>
+      <ul>
+        <li>すべて表示／非表示、カプノグラム、リズム名、警報表示、胸骨圧迫、心拍音、音声ガイド</li>
+        <li>音声テスト、全画面、ヘルプ、初期値に戻す（2回タップで実行）</li>
+        <li>除細動後の結果の選択</li>
+      </ul>
+      <h2 style="margin-top:24px">アプリとして使う</h2>
+      <ul>
+        <li>Safari の共有ボタン →「ホーム画面に追加」で、アドレスバーのない全画面で起動できる</li>
+      </ul>
+      <h2 style="margin-top:24px">iPhoneで操作する</h2>
+      <ul>
+        <li>iPad：メニュー →「リモコン接続」→「表示側にする」で、6桁のコードを表示する</li>
+        <li>iPhone：メニュー →「リモコン接続」→「リモコンにする」で、そのコードを入力する</li>
+        <li>iPhoneでの操作が、iPadの画面に反映される。解析・除細動もiPhoneから操作できる</li>
+      </ul>
+      <h2 style="margin-top:24px">キーボード（Bluetooth接続時）</h2>
+      <ul>
+        <li><kbd>P</kbd><kbd>S</kbd><kbd>B</kbd><kbd>T</kbd><kbd>C</kbd>項目を選択　<kbd>↑</kbd><kbd>↓</kbd>数値変更　<kbd>Enter</kbd>数値を入力</li>
+        <li><kbd>1</kbd>–<kbd>0</kbd><kbd>-</kbd>リズム選択　<kbd>Space</kbd>表示／非表示　<kbd>V</kbd>全表示／全非表示</li>
+        <li><kbd>K</kbd>解析　<kbd>D</kbd>除細動</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<script>
+/*VT_BEGIN*/
+var VT = (function () {
+  var roomP = null;
+  function getRoom() {
+    if (!roomP) {
+      roomP = (window.claude && typeof window.claude.use === 'function')
+        ? Promise.race([window.claude.use('room'), new Promise(function (r) { setTimeout(function () { r(null); }, 3000); })]).catch(function () { return null; })
+        : Promise.resolve(null);
+    }
+    return roomP;
+  }
+  function loadPeer(ok, ng) {
+    if (window.Peer) return ok();
+    var s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js';
+    s.onload = ok; s.onerror = ng; document.head.appendChild(s);
+  }
+  function wrap(start) {
+    var h = null, closed = false;
+    start(function (hh) { h = hh; if (closed) hh.close(); });
+    return { send: function (m) { if (h) h.send(m); }, close: function () { closed = true; if (h) h.close(); } };
+  }
+
+  /* ---- room（アーティファクトの共有機能） ---- */
+  function roomOpen(R, role, code, o) {
+    var closed = false, nr = null, offs = [], want = role === 'host' ? 'remote' : 'host', timer = null, seen = false;
+    R.join('vsim' + code).then(function (r) {
+      if (closed) { r.leave(); return; }
+      nr = r;
+      r.presence({ role: role });
+      offs.push(r.on(role === 'host' ? 'c' : 's', function (msg) { if (!msg.sameTab) o.onMsg(msg.data); }));
+      offs.push(r.onPeers(function (ch) {
+        var n = ch.peers.filter(function (p) { return !p.sameTab && p.presence && p.presence.role === want; }).length;
+        if (n > 0) { seen = true; clearTimeout(timer); }
+        o.onCount(n);
+      }));
+      if (o.onReady) o.onReady();
+      if (role === 'remote') timer = setTimeout(function () { if (!seen) o.onErr('接続できません。コードが違うか、iPad側で「表示側にする」が開かれていません', true); }, 10000);
+    }).catch(function (e) { o.onErr('接続できません（' + ((e && e.code) || '不明') + '）', true); });
+    return {
+      send: function (m) {
+        if (!nr) return;
+        nr.emit(role === 'host' ? 's' : 'c', m).catch(function (e) { if (e && e.code === 'not_permitted') o.onErr('この端末には操作の権限がありません', false); });
+      },
+      close: function () { closed = true; clearTimeout(timer); offs.forEach(function (f) { try { f(); } catch (_) {} }); if (nr) nr.leave().catch(function () {}); }
+    };
+  }
+
+  /* ---- PeerJS（WebRTC）：アーティファクト外（Webに置いたとき）用 ---- */
+  function peerHost(o) {
+    var p = null, conns = [], closed = false;
+    function begin() {
+      loadPeer(function () {
+        if (closed) return;
+        var code = String(Math.floor(100000 + Math.random() * 900000));
+        p = new window.Peer('vsim-' + code);
+        p.on('open', function () { o.onCode(code); });
+        p.on('connection', function (c) {
+          c.on('open', function () { conns.push(c); o.onCount(conns.length); });
+          c.on('data', o.onMsg);
+          var drop = function () { conns = conns.filter(function (x) { return x !== c; }); o.onCount(conns.length); };
+          c.on('close', drop); c.on('error', drop);
+        });
+        p.on('error', function (e) {
+          if (e && e.type === 'unavailable-id') { try { p.destroy(); } catch (_) {} begin(); return; }
+          o.onErr('接続できません（' + ((e && e.type) || '不明') + '）。ネットワークを確認してください', false);
+        });
+        p.on('disconnected', function () { try { p.reconnect(); } catch (_) {} });
+      }, function () { o.onErr('通信用の部品を読み込めません。ネットワークを確認してください', false); });
+    }
+    begin();
+    return {
+      send: function (m) { conns.forEach(function (c) { try { if (c.open) c.send(m); } catch (_) {} }); },
+      close: function () { closed = true; try { conns.forEach(function (c) { c.close(); }); if (p) p.destroy(); } catch (_) {} }
+    };
+  }
+  function peerJoin(code, o) {
+    var p = null, c = null, timer = null, retry = null, closed = false, linked = false;
+    function open() {
+      loadPeer(function () {
+        if (closed) return;
+        try { if (p) p.destroy(); } catch (_) {}
+        p = new window.Peer();
+        p.on('open', dial);
+        p.on('error', function (e) {
+          var ty = e && e.type;
+          if (ty === 'peer-unavailable') o.onErr('接続できません。コードが違うか、iPad側の「リモコン接続」画面が開かれていません', true);
+          else if (linked) lostLink();
+          else o.onErr('通信エラーです（' + (ty || '不明') + '）。ネットワークを確認してください。会場のWi-Fiでつながらないときは、iPhoneのテザリングにiPadをつないでください', true);
+        });
+      }, function () { o.onErr('通信用の部品を読み込めません。ネットワークを確認してください', true); });
+    }
+    function dial() {
+      c = p.connect('vsim-' + code, { serialization: 'json', reliable: true });
+      c.on('open', function () { clearTimeout(timer); linked = true; o.onLink(true); });
+      c.on('data', o.onMsg); c.on('close', lostLink); c.on('error', lostLink);
+      clearTimeout(timer);
+      timer = setTimeout(function () { if (!linked) o.onErr('接続できません。時間がかかっています。ネットワークを確認してください', true); }, 15000);
+    }
+    function lostLink() {
+      if (closed) return;
+      var was = linked; linked = false; if (was) o.onLink(false);
+      clearTimeout(retry); retry = setTimeout(open, 2000);
+    }
+    open();
+    return {
+      send: function (m) { try { if (c && c.open) c.send(m); } catch (_) {} },
+      close: function () { closed = true; clearTimeout(timer); clearTimeout(retry); try { if (p) p.destroy(); } catch (_) {} }
+    };
+  }
+
+  var VT = { mode: null };
+  // 表示側（iPad）：o = { onCode, onMsg, onCount, onErr }
+  VT.host = function (o) {
+    return wrap(function (set) {
+      getRoom().then(function (R) {
+        VT.mode = R ? 'room' : 'peer';
+        if (!R) { set(peerHost(o)); return; }
+        var code = String(Math.floor(100000 + Math.random() * 900000));
+        set(roomOpen(R, 'host', code, { onMsg: o.onMsg, onCount: o.onCount, onErr: o.onErr, onReady: function () { o.onCode(code); } }));
+      });
+    });
+  };
+  // リモコン側（iPhone）：o = { onMsg, onLink, onErr }
+  VT.join = function (code, o) {
+    return wrap(function (set) {
+      getRoom().then(function (R) {
+        VT.mode = R ? 'room' : 'peer';
+        if (!R) { set(peerJoin(code, o)); return; }
+        var linked = false;
+        set(roomOpen(R, 'remote', code, { onMsg: o.onMsg, onErr: o.onErr, onCount: function (n) {
+          if (n > 0 && !linked) { linked = true; o.onLink(true); } else if (n === 0 && linked) { linked = false; o.onLink(false); }
+        } }));
+      });
+    });
+  };
+  return VT;
+})();
+
+/*VT_END*/
+/*RMDOC_BEGIN*/
+var RM_DOC = "<!doctype html>\n<html lang=\"ja\"><head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1,user-scalable=no\">\n<meta name=\"apple-mobile-web-app-capable\" content=\"yes\">\n<meta name=\"mobile-web-app-capable\" content=\"yes\">\n<meta name=\"apple-mobile-web-app-title\" content=\"リモコン\">\n<meta name=\"apple-mobile-web-app-status-bar-style\" content=\"black\">\n<meta name=\"theme-color\" content=\"#04080a\">\n<link rel=\"apple-touch-icon\" href=\"apple-touch-icon.png\">\n<title>バイタルシミュレーター リモコン<\/title>\n<style>\n:root { --bg:#04080a; --panel:#091216; --line:#17292f; --fg:#e9f4f1; --dim:#7b959b; --hr:#4dff8a; --spo2:#3fd8ff; --bp:#ff7466; --temp:#ffcf3a; --etco2:#c58bff; --alarm:#ff2f41; color-scheme: dark; }\n* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }\nhtml, body { margin: 0; background: var(--bg); color: var(--fg); font-family: 'Hiragino Sans', 'Noto Sans JP', system-ui, sans-serif; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; overscroll-behavior: none; }\nbody { padding: max(12px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) max(28px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left)); max-width: 640px; margin: 0 auto; }\nbutton { appearance: none; font: inherit; color: var(--fg); background: #10222a; border: 1px solid #33505a; min-height: 52px; padding: 0 12px; font-weight: 700; font-size: 17px; touch-action: manipulation; cursor: pointer; }\nbutton:active { filter: brightness(1.4); }\nbutton:disabled { opacity: 0.3; }\nbutton.on { color: var(--c, var(--hr)); border-color: var(--c, var(--hr)); background: color-mix(in srgb, var(--c, var(--hr)) 14%, #0b171c); }\nh2 { margin: 22px 0 8px; font-size: 14px; color: var(--dim); font-weight: 500; letter-spacing: 0.08em; }\n.bar { display: flex; align-items: center; gap: 10px; padding: 8px 0; font-size: 15px; color: var(--dim); }\n.dot { width: 10px; height: 10px; border-radius: 50%; background: var(--alarm); flex: none; }\n.dot.ok { background: var(--hr); }\n#connect { padding-top: 14vh; text-align: center; }\n#connect h1 { font-size: 24px; margin: 0 0 8px; }\n#connect p { color: var(--dim); font-size: 15px; line-height: 1.6; margin: 0 0 22px; }\n#codeIn { width: 100%; font: 600 44px/1.2 'Barlow Condensed', 'Arial Narrow', sans-serif; letter-spacing: 0.25em; text-align: center; background: #04080a; color: var(--hr); border: 2px solid #33505a; padding: 10px; margin-bottom: 14px; -webkit-user-select: text; user-select: text; }\n#go { width: 100%; min-height: 60px; font-size: 20px; background: var(--hr); color: #04080a; border-color: var(--hr); }\n#err { color: var(--alarm); min-height: 3em; margin-top: 14px; font-size: 15px; line-height: 1.5; }\n#ctl[hidden], #connect[hidden], #sheet[hidden] { display: none; }\n.msg { min-height: 2.6em; display: flex; align-items: center; font-size: 17px; font-weight: 700; line-height: 1.4; padding: 6px 2px; }\n.two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }\n.big { min-height: 76px; font-size: 24px; letter-spacing: 0.08em; }\n#bA { --c: var(--spo2); color: var(--spo2); border: 2px solid var(--spo2); background: transparent; }\n#bS { --c: var(--temp); color: var(--temp); border: 2px solid var(--temp); background: transparent; }\n#bC { --c: #ff9f43; color: #ff9f43; border: 2px solid #ff9f43; background: transparent; min-height: 64px; font-size: 22px; letter-spacing: 0.08em; width: 100%; margin-top: 10px; }\n#bC.on { background: #ff9f43; color: #1a0e00; }\n#bS.ready { background: var(--temp); color: #1a1300; animation: pulse 0.9s steps(1) infinite; }\n@keyframes pulse { 50% { filter: brightness(0.62); } }\n.row { display: grid; grid-template-columns: 62px minmax(0, 1fr) auto; gap: 6px; align-items: center; background: var(--panel); border: 1px solid var(--line); padding: 8px 8px 8px 12px; margin-bottom: 8px; color: var(--c); }\n.row .lab { font-weight: 700; font-size: 15px; line-height: 1.2; }\n.row .lab small { display: block; color: var(--dim); font-weight: 500; font-size: 12px; }\n.vals { display: flex; gap: 6px; justify-content: flex-end; min-width: 0; }\n.vals button { min-width: 0; flex: 1 1 0; max-width: 92px; padding: 0 4px; min-height: 56px; font: 600 32px/1 'Barlow Condensed', 'Arial Narrow', sans-serif; color: var(--c); background: #04080a; font-variant-numeric: tabular-nums; }\n.vals .sl { align-self: center; color: var(--dim); }\n.tg { min-width: 62px; min-height: 56px; font-size: 13px; padding: 0 6px; }\n.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }\n.grid2 button { min-height: 58px; text-align: left; line-height: 1.3; font-size: 15px; }\n.chips { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }\n.chips button { min-height: 56px; font-size: 15px; white-space: pre-line; line-height: 1.3; }\n.danger { color: var(--alarm); border-color: var(--alarm); }\n#sheet { position: fixed; left: 0; right: 0; bottom: 0; z-index: 10; background: #0b171c; border-top: 2px solid var(--c, #33505a); padding: 12px 14px max(14px, env(safe-area-inset-bottom)); max-width: 640px; margin: 0 auto; box-shadow: 0 -12px 40px rgba(0,0,0,0.6); }\n#sh { display: flex; align-items: baseline; gap: 10px; font-size: 20px; color: var(--c); margin-bottom: 8px; }\n#sh small { color: var(--dim); font-size: 14px; }\n#shX { margin-left: auto; min-height: 40px; }\n#disp { font: 600 54px/1 'Barlow Condensed', 'Arial Narrow', sans-serif; text-align: right; padding: 8px 14px; background: #04080a; border: 1px solid var(--line); color: var(--c); min-height: 70px; margin-bottom: 8px; font-variant-numeric: tabular-nums; }\n#disp.cur { opacity: 0.55; }\n.pad { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }\n.pad button { min-height: 54px; font: 600 28px/1 'Barlow Condensed', 'Arial Narrow', sans-serif; }\n.pad .ok { grid-column: span 2; background: var(--c); color: #04080a; border-color: var(--c); font-family: inherit; font-size: 18px; }\n.pad .st { font-size: 22px; }\n<\/style><\/head>\n<body>\n<section id=\"connect\">\n  <h1>バイタルシミュレーター リモコン<\/h1>\n  <p>iPadの「メニュー」→「リモコン接続」に表示された<br>6桁のコードを入力してください。<\/p>\n  <input id=\"codeIn\" inputmode=\"numeric\" pattern=\"[0-9]*\" maxlength=\"6\" placeholder=\"000000\" autocomplete=\"off\">\n  <button id=\"go\" type=\"button\">接続<\/button>\n  <div id=\"err\"><\/div>\n  <button id=\"back\" type=\"button\" hidden style=\"margin-top:18px;width:100%\">戻る<\/button>\n<\/section>\n\n<section id=\"ctl\" hidden>\n  <div class=\"bar\"><span class=\"dot\" id=\"dot\"><\/span><span id=\"stat\">接続中<\/span><button id=\"exit\" type=\"button\" hidden style=\"margin-left:auto;min-height:40px;font-size:14px\">終了<\/button><\/div>\n  <div class=\"msg\" id=\"msg\"><\/div>\n  <div class=\"two\">\n    <button class=\"big\" id=\"bA\" type=\"button\">解析<\/button>\n    <button class=\"big\" id=\"bS\" type=\"button\" disabled>除細動<\/button>\n  <\/div>\n  <button id=\"bC\" type=\"button\">胸骨圧迫<\/button>\n\n  <h2>バイタルサイン（数値をタップして変更）<\/h2>\n  <div id=\"rows\"><\/div>\n\n  <h2>表示の切り替え<\/h2>\n  <div class=\"chips\" id=\"vis\"><\/div>\n\n  <h2>心電図のリズム<\/h2>\n  <div class=\"grid2\" id=\"rh\"><\/div>\n\n  <h2>除細動後の結果<\/h2>\n  <div class=\"chips\" id=\"oc\" style=\"grid-template-columns:1fr\"><\/div>\n\n  <h2>設定<\/h2>\n  <div class=\"chips\" id=\"set\"><\/div>\n<\/section>\n\n<div id=\"sheet\" hidden>\n  <div id=\"sh\"><b id=\"shN\"><\/b><small id=\"shU\"><\/small><button id=\"shX\" type=\"button\">✕<\/button><\/div>\n  <div id=\"disp\"><\/div>\n  <div class=\"pad\" id=\"pad\"><\/div>\n<\/div>\n\n<script>\n/*VT_BEGIN*/\nvar VT = (function () {\n  var roomP = null;\n  function getRoom() {\n    if (!roomP) {\n      roomP = (window.claude && typeof window.claude.use === 'function')\n        ? Promise.race([window.claude.use('room'), new Promise(function (r) { setTimeout(function () { r(null); }, 3000); })]).catch(function () { return null; })\n        : Promise.resolve(null);\n    }\n    return roomP;\n  }\n  function loadPeer(ok, ng) {\n    if (window.Peer) return ok();\n    var s = document.createElement('script');\n    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js';\n    s.onload = ok; s.onerror = ng; document.head.appendChild(s);\n  }\n  function wrap(start) {\n    var h = null, closed = false;\n    start(function (hh) { h = hh; if (closed) hh.close(); });\n    return { send: function (m) { if (h) h.send(m); }, close: function () { closed = true; if (h) h.close(); } };\n  }\n\n  /* ---- room（アーティファクトの共有機能） ---- */\n  function roomOpen(R, role, code, o) {\n    var closed = false, nr = null, offs = [], want = role === 'host' ? 'remote' : 'host', timer = null, seen = false;\n    R.join('vsim' + code).then(function (r) {\n      if (closed) { r.leave(); return; }\n      nr = r;\n      r.presence({ role: role });\n      offs.push(r.on(role === 'host' ? 'c' : 's', function (msg) { if (!msg.sameTab) o.onMsg(msg.data); }));\n      offs.push(r.onPeers(function (ch) {\n        var n = ch.peers.filter(function (p) { return !p.sameTab && p.presence && p.presence.role === want; }).length;\n        if (n > 0) { seen = true; clearTimeout(timer); }\n        o.onCount(n);\n      }));\n      if (o.onReady) o.onReady();\n      if (role === 'remote') timer = setTimeout(function () { if (!seen) o.onErr('接続できません。コードが違うか、iPad側で「表示側にする」が開かれていません', true); }, 10000);\n    }).catch(function (e) { o.onErr('接続できません（' + ((e && e.code) || '不明') + '）', true); });\n    return {\n      send: function (m) {\n        if (!nr) return;\n        nr.emit(role === 'host' ? 's' : 'c', m).catch(function (e) { if (e && e.code === 'not_permitted') o.onErr('この端末には操作の権限がありません', false); });\n      },\n      close: function () { closed = true; clearTimeout(timer); offs.forEach(function (f) { try { f(); } catch (_) {} }); if (nr) nr.leave().catch(function () {}); }\n    };\n  }\n\n  /* ---- PeerJS（WebRTC）：アーティファクト外（Webに置いたとき）用 ---- */\n  function peerHost(o) {\n    var p = null, conns = [], closed = false;\n    function begin() {\n      loadPeer(function () {\n        if (closed) return;\n        var code = String(Math.floor(100000 + Math.random() * 900000));\n        p = new window.Peer('vsim-' + code);\n        p.on('open', function () { o.onCode(code); });\n        p.on('connection', function (c) {\n          c.on('open', function () { conns.push(c); o.onCount(conns.length); });\n          c.on('data', o.onMsg);\n          var drop = function () { conns = conns.filter(function (x) { return x !== c; }); o.onCount(conns.length); };\n          c.on('close', drop); c.on('error', drop);\n        });\n        p.on('error', function (e) {\n          if (e && e.type === 'unavailable-id') { try { p.destroy(); } catch (_) {} begin(); return; }\n          o.onErr('接続できません（' + ((e && e.type) || '不明') + '）。ネットワークを確認してください', false);\n        });\n        p.on('disconnected', function () { try { p.reconnect(); } catch (_) {} });\n      }, function () { o.onErr('通信用の部品を読み込めません。ネットワークを確認してください', false); });\n    }\n    begin();\n    return {\n      send: function (m) { conns.forEach(function (c) { try { if (c.open) c.send(m); } catch (_) {} }); },\n      close: function () { closed = true; try { conns.forEach(function (c) { c.close(); }); if (p) p.destroy(); } catch (_) {} }\n    };\n  }\n  function peerJoin(code, o) {\n    var p = null, c = null, timer = null, retry = null, closed = false, linked = false;\n    function open() {\n      loadPeer(function () {\n        if (closed) return;\n        try { if (p) p.destroy(); } catch (_) {}\n        p = new window.Peer();\n        p.on('open', dial);\n        p.on('error', function (e) {\n          var ty = e && e.type;\n          if (ty === 'peer-unavailable') o.onErr('接続できません。コードが違うか、iPad側の「リモコン接続」画面が開かれていません', true);\n          else if (linked) lostLink();\n          else o.onErr('通信エラーです（' + (ty || '不明') + '）。ネットワークを確認してください。会場のWi-Fiでつながらないときは、iPhoneのテザリングにiPadをつないでください', true);\n        });\n      }, function () { o.onErr('通信用の部品を読み込めません。ネットワークを確認してください', true); });\n    }\n    function dial() {\n      c = p.connect('vsim-' + code, { serialization: 'json', reliable: true });\n      c.on('open', function () { clearTimeout(timer); linked = true; o.onLink(true); });\n      c.on('data', o.onMsg); c.on('close', lostLink); c.on('error', lostLink);\n      clearTimeout(timer);\n      timer = setTimeout(function () { if (!linked) o.onErr('接続できません。時間がかかっています。ネットワークを確認してください', true); }, 15000);\n    }\n    function lostLink() {\n      if (closed) return;\n      var was = linked; linked = false; if (was) o.onLink(false);\n      clearTimeout(retry); retry = setTimeout(open, 2000);\n    }\n    open();\n    return {\n      send: function (m) { try { if (c && c.open) c.send(m); } catch (_) {} },\n      close: function () { closed = true; clearTimeout(timer); clearTimeout(retry); try { if (p) p.destroy(); } catch (_) {} }\n    };\n  }\n\n  var VT = { mode: null };\n  // 表示側（iPad）：o = { onCode, onMsg, onCount, onErr }\n  VT.host = function (o) {\n    return wrap(function (set) {\n      getRoom().then(function (R) {\n        VT.mode = R ? 'room' : 'peer';\n        if (!R) { set(peerHost(o)); return; }\n        var code = String(Math.floor(100000 + Math.random() * 900000));\n        set(roomOpen(R, 'host', code, { onMsg: o.onMsg, onCount: o.onCount, onErr: o.onErr, onReady: function () { o.onCode(code); } }));\n      });\n    });\n  };\n  // リモコン側（iPhone）：o = { onMsg, onLink, onErr }\n  VT.join = function (code, o) {\n    return wrap(function (set) {\n      getRoom().then(function (R) {\n        VT.mode = R ? 'room' : 'peer';\n        if (!R) { set(peerJoin(code, o)); return; }\n        var linked = false;\n        set(roomOpen(R, 'remote', code, { onMsg: o.onMsg, onErr: o.onErr, onCount: function (n) {\n          if (n > 0 && !linked) { linked = true; o.onLink(true); } else if (n === 0 && linked) { linked = false; o.onLink(false); }\n        } }));\n      });\n    });\n  };\n  return VT;\n})();\n\n/*VT_END*/\n<\/script>\n<script>\n(function () {\n  'use strict';\n  var $ = function (id) { return document.getElementById(id); };\n  var st = null, link = null, resetArm = 0, bound = false;\n  var EMB = window.parent !== window;   // iPad側ページの中に表示されているとき\n  var COL = { hr: 'var(--hr)', spo2: 'var(--spo2)', bp: 'var(--bp)', temp: 'var(--temp)', etco2: 'var(--etco2)' };\n  var TN = { hr: ['脈拍', '/min', 'hr'], spo2: ['SpO₂', '%', 'spo2'], sys: ['血圧 収縮期', 'mmHg', 'bp'], dia: ['血圧 拡張期', 'mmHg', 'bp'], temp: ['体温', '℃', 'temp'], etco2: ['EtCO₂', 'mmHg', 'etco2'] };\n\n  function send(m) { if (link) link.send(m); }\n  function store(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (_) {} return null; }\n  function fail(t) {\n    $('ctl').hidden = true; $('connect').hidden = false; $('err').textContent = t; $('go').disabled = false;\n    if (link) { link.close(); link = null; }\n  }\n  function onMsg(m) { if (m && m.t === 'state') { st = m; render(); } }\n  function onLink(ok) {\n    if (ok) { $('connect').hidden = true; $('ctl').hidden = false; $('go').disabled = false; setLink(true); send({ t: 'hello' }); }\n    else if (!$('ctl').hidden) setLink(false);\n  }\n  function onErr(t, fatal) { if (fatal || $('ctl').hidden) fail(t); else $('stat').textContent = t; }\n  function joinLink(code) {\n    if (!EMB) return VT.join(code, { onMsg: onMsg, onLink: onLink, onErr: onErr });\n    if (!bound) {\n      bound = true;\n      window.addEventListener('message', function (e) {\n        var d = e.data; if (!d || !d.v || e.source !== window.parent) return;\n        if (d.v === 'msg') onMsg(d.m); else if (d.v === 'link') onLink(d.ok); else if (d.v === 'err') onErr(d.t, d.fatal);\n      });\n    }\n    window.parent.postMessage({ v: 'join', code: code }, '*');\n    return { send: function (m) { window.parent.postMessage({ v: 'send', m: m }, '*'); }, close: function () {} };\n  }\n  function start() {\n    var code = $('codeIn').value.replace(/\\D/g, '');\n    if (code.length !== 6) { $('err').textContent = '6桁のコードを入力してください'; return; }\n    store('vsim-code', code); $('err').textContent = '接続中…'; $('go').disabled = true;\n    if (link) link.close();\n    link = joinLink(code);\n  }\n  function setLink(ok) { $('dot').className = 'dot' + (ok ? ' ok' : ''); $('stat').textContent = ok ? 'iPadに接続中' : '切断されました。再接続中…'; }\n  function exitEmb() { if (link) link.close(); link = null; window.parent.postMessage({ v: 'close' }, '*'); }\n\n  /* ---- 画面の組み立て ---- */\n  function btn(parent, text, fn, cls) {\n    var b = document.createElement('button'); b.type = 'button'; b.textContent = text; if (cls) b.className = cls;\n    b.addEventListener('click', fn); parent.appendChild(b); return b;\n  }\n  var built = false, B = {};\n  function build() {\n    built = true;\n    var rows = $('rows');\n    [['hr', ['hr']], ['spo2', ['spo2']], ['bp', ['sys', 'dia']], ['temp', ['temp']], ['etco2', ['etco2']]].forEach(function (r) {\n      var tile = r[0], div = document.createElement('div'); div.className = 'row'; div.style.setProperty('--c', COL[tile]);\n      var lab = document.createElement('div'); lab.className = 'lab';\n      lab.innerHTML = (tile === 'bp' ? '血圧' : TN[tile][0]) + '<small>' + (tile === 'bp' ? 'mmHg' : TN[tile][1]) + '<\/small>';\n      var vals = document.createElement('div'); vals.className = 'vals';\n      r[1].forEach(function (k, i) {\n        if (i) { var sl = document.createElement('span'); sl.className = 'sl'; sl.textContent = '/'; vals.appendChild(sl); }\n        B[k] = btn(vals, '', function () { openPad(k); });\n      });\n      B['tg_' + tile] = btn(div, '', function () { send({ t: 'vis', k: tile, v: !st.vis[tile] }); st.vis[tile] = !st.vis[tile]; render(); }, 'tg');\n      div.insertBefore(lab, div.firstChild); div.insertBefore(vals, B['tg_' + tile]);\n      rows.appendChild(div);\n    });\n    B.bA = $('bA'); B.bS = $('bS'); B.bC = $('bC');\n    $('bC').addEventListener('click', function () { st.cpr = !st.cpr; send({ t: 'cpr', v: st.cpr }); render(); });\n    $('bA').addEventListener('click', function () { send({ t: 'analyze' }); });\n    $('bS').addEventListener('click', function () { send({ t: 'shock' }); });\n    var vis = $('vis');\n    B.v_ecg = btn(vis, '心電図', function () { tog('ecg'); });\n    B.v_pleth = btn(vis, 'カプノグラム', function () { tog('pleth'); });\n    B.v_name = btn(vis, 'リズム名', function () { st.showName = !st.showName; send({ t: 'name', v: st.showName }); render(); });\n    btn(vis, 'すべて表示', function () { send({ t: 'all', v: true }); });\n    btn(vis, 'すべて非表示', function () { send({ t: 'all', v: false }); });\n    var set = $('set');\n    B.s_alarms = btn(set, '警報表示', function () { st.alarms = !st.alarms; send({ t: 'alarms', v: st.alarms }); render(); });\n    B.s_sound = btn(set, '心拍音', function () { st.sound = !st.sound; send({ t: 'sound', v: st.sound }); render(); });\n    B.s_voice = btn(set, '音声ガイド', function () { st.voice = !st.voice; send({ t: 'voice', v: st.voice }); render(); });\n    B.reset = btn(set, '初期値に戻す', function () {\n      if (Date.now() - resetArm < 3000) { resetArm = 0; send({ t: 'reset' }); } else { resetArm = Date.now(); setTimeout(render, 3100); }\n      render();\n    }, 'danger');\n    B.reset.style.gridColumn = '1 / -1';\n  }\n  function tog(k) { st.vis[k] = !st.vis[k]; send({ t: 'vis', k: k, v: st.vis[k] }); render(); }\n  function fmt(k, v) { return k === 'temp' ? Number(v).toFixed(1) : String(v); }\n\n  function render() {\n    if (!st) return;\n    if (!built) build();\n    $('msg').textContent = st.msg || '待機中';\n    var d = st.dst;\n    B.bA.disabled = d === 'analyzing' || d === 'charging';\n    B.bS.disabled = d !== 'ready'; B.bS.classList.toggle('ready', d === 'ready');\n    B.bC.textContent = '胸骨圧迫　' + (st.cpr ? 'ON' : 'OFF'); B.bC.classList.toggle('on', !!st.cpr);\n    ['hr', 'spo2', 'sys', 'dia', 'temp', 'etco2'].forEach(function (k) { B[k].textContent = fmt(k, st[k]); });\n    ['hr', 'spo2', 'bp', 'temp', 'etco2'].forEach(function (t) {\n      var b = B['tg_' + t], on = !!st.vis[t]; b.textContent = on ? '表示中' : '非表示'; b.classList.toggle('on', on); b.style.setProperty('--c', COL[t]);\n    });\n    function on(b, v, label) { b.textContent = label + '\\n' + (v ? '表示中' : '非表示'); b.classList.toggle('on', !!v); }\n    on(B.v_ecg, st.vis.ecg, '心電図'); on(B.v_pleth, st.vis.pleth, 'カプノグラム'); on(B.v_name, st.showName, 'リズム名');\n    B.s_alarms.textContent = '警報表示\\n' + (st.alarms ? 'ON' : 'OFF'); B.s_alarms.classList.toggle('on', !!st.alarms);\n    B.s_sound.textContent = '心拍音\\n' + (st.sound ? 'ON' : 'OFF'); B.s_sound.classList.toggle('on', !!st.sound);\n    B.s_voice.textContent = '音声ガイド\\n' + (st.voice ? 'ON' : 'OFF'); B.s_voice.classList.toggle('on', !!st.voice);\n    B.reset.textContent = Date.now() - resetArm < 3000 ? 'もう一度タップで初期化' : '初期値に戻す';\n    // リズム・結果の一覧は、iPad側の内容に合わせて作る\n    var rh = $('rh'), key = JSON.stringify(st.rl);\n    if (rh.dataset.k !== key) {\n      rh.dataset.k = key; rh.textContent = ''; B.rh = [];\n      st.rl.forEach(function (n, i) { B.rh.push(btn(rh, n, function () { send({ t: 'rh', i: i }); })); });\n    }\n    B.rh.forEach(function (b, i) { b.classList.toggle('on', i === st.rhythm); });\n    var oc = $('oc'), ok = JSON.stringify(st.ol);\n    if (oc.dataset.k !== ok) {\n      oc.dataset.k = ok; oc.textContent = ''; B.oc = [];\n      st.ol.forEach(function (o) { var b = btn(oc, o[1], function () { send({ t: 'outcome', v: o[0] }); st.outcome = o[0]; render(); }); b.dataset.id = o[0]; B.oc.push(b); });\n    }\n    B.oc.forEach(function (b) { b.classList.toggle('on', b.dataset.id === st.outcome); });\n    if (cur) paintPad();\n  }\n\n  /* ---- テンキー ---- */\n  var cur = null, entry = null;\n  ['7', '8', '9', '−10', '4', '5', '6', '−1', '1', '2', '3', '＋1', 'bs', '0', '.', '＋10'].forEach(function (ch) {\n    var b = document.createElement('button'); b.type = 'button'; b.textContent = ch === 'bs' ? '⌫' : ch;\n    if (/^[−＋]/.test(ch)) b.className = 'st';\n    b.addEventListener('click', function () { padKey(ch); }); $('pad').appendChild(b);\n    if (ch === '.') b.id = 'dotKey';\n  });\n  var okb = document.createElement('button'); okb.type = 'button'; okb.className = 'ok'; okb.textContent = '確定';\n  okb.addEventListener('click', function () { commit(); closePad(); }); $('pad').appendChild(okb);\n  var cb = document.createElement('button'); cb.type = 'button'; cb.textContent = '取消'; cb.style.gridColumn = 'span 2';\n  cb.addEventListener('click', closePad); $('pad').appendChild(cb);\n  $('shX').addEventListener('click', closePad);\n\n  function openPad(k) { cur = k; entry = null; $('sheet').hidden = false; $('sheet').style.setProperty('--c', COL[TN[k][2]]); $('shN').textContent = TN[k][0]; $('shU').textContent = TN[k][1]; paintPad(); }\n  function closePad() { cur = null; entry = null; $('sheet').hidden = true; }\n  function paintPad() {\n    var d = $('disp'); d.textContent = entry !== null ? (entry || '–') : fmt(cur, st[cur]); d.classList.toggle('cur', entry === null);\n    $('dotKey').disabled = cur !== 'temp';\n  }\n  function commit() {\n    if (entry === null || entry === '' || entry === '.') { entry = null; return; }\n    var v = (cur === 'temp' && entry.indexOf('.') < 0 && entry.length >= 3) ? parseFloat(entry.slice(0, -1) + '.' + entry.slice(-1)) : parseFloat(entry);\n    entry = null; if (isFinite(v)) { send({ t: 'val', k: cur, v: v }); st[cur] = v; }\n  }\n  function padKey(ch) {\n    if (/^[−＋]/.test(ch)) {\n      commit();\n      var big = /10|1\\.0/.test(ch) && ch.indexOf('10') >= 0, sign = ch.charAt(0) === '＋' ? 1 : -1;\n      var step = cur === 'temp' ? (big ? 1 : 0.1) : (big ? 10 : 1);\n      var v = Math.round((Number(st[cur]) + sign * step) * 10) / 10; st[cur] = v; send({ t: 'val', k: cur, v: v }); paintPad(); render(); return;\n    }\n    if (entry === null) entry = '';\n    if (ch === 'bs') entry = entry.slice(0, -1);\n    else if (ch === '.') { if (cur === 'temp' && entry.indexOf('.') < 0) entry += '.'; }\n    else if (entry.length < 5) entry += ch;\n    paintPad();\n  }\n\n  if (EMB) { $('back').hidden = false; $('exit').hidden = false; $('back').addEventListener('click', exitEmb); $('exit').addEventListener('click', exitEmb); }\n  $('go').addEventListener('click', start);\n  $('codeIn').addEventListener('keydown', function (e) { if (e.key === 'Enter') start(); });\n  var last = store('vsim-code'); if (last) $('codeIn').value = last;\n  ['gesturestart', 'gesturechange', 'gestureend'].forEach(function (n) { document.addEventListener(n, function (e) { e.preventDefault(); }); });\n  window.__remote = { get st() { return st; } };\n})();\n<\/script>\n<\/body><\/html>\n";
+/*RMDOC_END*/
+</script>
+<script>
+(function () {
+  'use strict';
+  var SPAN = 6;        // 画面幅が表す秒数
+  var DELAY = 0.12;    // 波形の表示遅延（イベント生成を先行させるため）
+
+  var RH = [
+    { key: '1', id: 'nsr',    name: '洞調律', en: 'Sinus Rhythm', hr: 75 },
+    { key: '2', id: 'af',     name: '心房細動', en: 'Atrial Fibrillation', hr: 110 },
+    { key: '3', id: 'flutter',name: '心房粗動', en: 'Atrial Flutter', hr: 150 },
+    { key: '4', id: 'chb',    name: '完全房室ブロック', en: 'Complete AV Block (3rd degree)', hr: 36 },
+    { key: '5', id: 'wenck',  name: '2度房室ブロック（Wenckebach型）', en: 'Second-degree AV Block, Mobitz I', hr: 60 },
+    { key: '6', id: 'mob2',   name: '2度房室ブロック（Mobitz II型）', en: 'Second-degree AV Block, Mobitz II', hr: 50 },
+    { key: '7', id: 'pvc',    name: '洞調律＋心室期外収縮', en: 'Sinus Rhythm with Frequent PVCs', hr: 75 },
+    { key: '8', id: 'vt',     name: '心室頻拍', en: 'Ventricular Tachycardia', hr: 180 },
+    { key: '9', id: 'vf',     name: '心室細動', en: 'Ventricular Fibrillation', hr: 0 },
+    { key: '0', id: 'asys',   name: '心静止', en: 'Asystole', hr: 0 },
+    { key: '-', id: 'bigem',  name: '心室性二段脈（洞調律と期外収縮が交互）', en: 'Ventricular Bigeminy', hr: 75 }
+  ];
+  var S = { rhythm: 0, hr: 75, spo2: 98, sys: 120, dia: 80, temp: 36.6, etco2: 38, cpr: false,
+            sel: null, entry: null, sound: false, alarms: true, showName: false,
+            vis: { ecg: false, pleth: false, hr: false, spo2: false, bp: false, temp: false, etco2: false } };
+  var curId = 'nsr';
+  var ev = [], bt = [];
+  var G = { next: 0, pNext: 0, vNext: 0 };
+
+  var perf = function () { return performance.now() / 1000; };
+  var clamp = function (v, a, b) { return Math.min(b, Math.max(a, v)); };
+  var gs = function (x, s) { return Math.exp(-x * x / (2 * s * s)); };
+  var $ = function (id) { return document.getElementById(id); };
+  var pulseless = function () { return curId === 'vf' || curId === 'asys'; };
+  var flutterN = function () { return clamp(Math.round(300 / S.hr), 2, 6); };
+  var effHR = function () { return curId === 'flutter' ? Math.round(300 / flutterN()) : S.hr; };
+  var hrLimits = function () { return curId === 'chb' ? [15, 80] : curId === 'vt' ? [100, 250] : [20, 250]; };
+
+  /* ---------------- ECG event generator ---------------- */
+  function ampScale() { return clamp((S.sys - S.dia) / 45, 0.25, 1.2) * (S.spo2 < 85 ? 0.75 : 1); }
+  function beat(t, k) { bt.push({ t: t, amp: k * ampScale(), beeped: t < perf() - 0.4 }); }
+
+  function resetGen(initial) {
+    var now = perf();
+    if (initial) {
+      G.next = G.pNext = G.vNext = now - 5.5;
+    } else {
+      ev = ev.filter(function (e) { return e.t <= now; });
+      bt = bt.filter(function (b) { return b.t <= now; });
+      G.next = now; G.pNext = now; G.vNext = now + 0.35;
+    }
+    if (curId === 'flutter') G.next = Math.ceil(G.next / 0.2) * 0.2;
+  }
+
+  function gen(now) {
+    ['next', 'pNext', 'vNext'].forEach(function (k) {
+      if (now - G[k] > 8) G[k] = (curId === 'flutter' && k === 'next') ? Math.ceil((now - 6) / 0.2) * 0.2 : now - 6;
+    });
+    var hr = S.hr, t0, rr, q, i;
+    switch (curId) {
+      case 'nsr': case 'pvc': case 'bigem':
+        while (G.next <= now) {
+          t0 = G.next;
+          rr = 60 / hr * (1 + 0.02 * Math.sin(t0 * 0.9));
+          var pr = Math.max(0.11, 0.16 - (hr - 75) * 0.0003);
+          ev.push({ t: t0, k: 'p' });
+          q = t0 + pr;
+          ev.push({ t: q, k: 'qrs', rr: rr }); beat(q, 1);
+          G.next = t0 + rr;
+          if (curId === 'bigem' || (curId === 'pvc' && Math.random() < 0.3)) {   // 二段脈は毎回、期外収縮が1拍おきに出る
+            var pt = q + 0.65 * rr;
+            ev.push({ t: pt, k: 'pvc', rr: rr }); beat(pt, 0.55);
+            G.next = t0 + 2 * rr;
+          }
+        }
+        break;
+      case 'af':
+        while (G.next <= now) {
+          t0 = G.next;
+          var mean = 60 / hr;
+          rr = Math.max(0.26, mean * (0.55 + 0.9 * Math.random()));
+          ev.push({ t: t0, k: 'qrs', rr: rr });
+          beat(t0, clamp(Math.sqrt(rr / mean), 0.5, 1.2));
+          G.next = t0 + rr;
+        }
+        break;
+      case 'flutter':
+        var N = flutterN();
+        while (G.next <= now) {
+          t0 = G.next;
+          ev.push({ t: t0, k: 'qrs', rr: N * 0.2 }); beat(t0, 1);
+          G.next = t0 + N * 0.2;
+        }
+        break;
+      case 'chb':
+        while (G.pNext <= now) { ev.push({ t: G.pNext, k: 'p' }); G.pNext += 60 / 78; }
+        while (G.vNext <= now) {
+          t0 = G.vNext; rr = 60 / hr;
+          ev.push({ t: t0, k: hr <= 40 ? 'wide' : 'qrs', rr: rr }); beat(t0, hr <= 40 ? 0.9 : 1);
+          G.vNext = t0 + rr;
+        }
+        break;
+      case 'wenck':
+        var pw = 45 / hr, PRW = [0.16, 0.26, 0.37];
+        while (G.next <= now) {
+          t0 = G.next;
+          for (i = 0; i < 4; i++) {
+            ev.push({ t: t0 + i * pw, k: 'p' });
+            if (i < 3) { q = t0 + i * pw + PRW[i]; ev.push({ t: q, k: 'qrs', rr: pw }); beat(q, 1); }
+          }
+          G.next = t0 + 4 * pw;
+        }
+        break;
+      case 'mob2':
+        var pm = 40 / hr;
+        while (G.next <= now) {
+          t0 = G.next;
+          for (i = 0; i < 3; i++) {
+            ev.push({ t: t0 + i * pm, k: 'p' });
+            if (i < 2) { q = t0 + i * pm + 0.2; ev.push({ t: q, k: 'qrs', rr: pm * 1.5 }); beat(q, 1); }
+          }
+          G.next = t0 + 3 * pm;
+        }
+        break;
+      case 'vt':
+        while (G.next <= now) { beat(G.next, 0.6); G.next += 60 / hr; }
+        break;
+      default:
+        G.next = now; // vf / asystole
+    }
+  }
+
+  /* ---------------- waveforms ---------------- */
+  function wave(e, d) {
+    switch (e.k) {
+      case 'p': return 0.13 * gs(d, 0.026);
+      case 'qrs':
+        var tc = 0.2 + 0.1 * Math.min(e.rr, 1.2);
+        return -0.10 * gs(d + 0.024, 0.008) + 1.0 * gs(d, 0.011) - 0.22 * gs(d - 0.026, 0.010) + 0.30 * gs(d - tc, 0.045);
+      case 'wide':
+        return 0.95 * gs(d, 0.028) - 0.30 * gs(d - 0.08, 0.03) - 0.28 * gs(d - 0.30, 0.07);
+      case 'shock':
+        if (d < 0) return 0;
+        return (d < 0.03 ? 5 : d < 0.06 ? -4 : 0) + (d >= 0.06 ? 0.9 * Math.exp(-d / 0.3) : 0);
+      case 'pvc':
+        return 1.45 * gs(d - 0.01, 0.04) - 0.65 * gs(d - 0.12, 0.05) - 0.5 * gs(d - 0.32, 0.075);
+    }
+    return 0;
+  }
+  function baseline(t) {
+    var b = 0.015 * Math.sin(2 * Math.PI * 0.22 * t), TP = 2 * Math.PI;
+    if (curId === 'af') {
+      b += 0.045 * (Math.sin(TP * 6.3 * t) + 0.8 * Math.sin(TP * 8.2 * t + 1.3) + 0.6 * Math.sin(TP * 5.2 * t + 0.4)) * (0.65 + 0.35 * Math.sin(TP * 0.31 * t));
+    } else if (curId === 'flutter') {
+      var ph = TP * 5 * t;
+      b -= 0.16 * Math.sin(ph) + 0.07 * Math.sin(2 * ph + 0.8) + 0.03 * Math.sin(3 * ph + 1.6);
+    }
+    return b + (Math.random() - 0.5) * 0.012;
+  }
+  var cont = 0, contType = 'vt', ph1 = 0, vp = [0, 0, 0], cprLv = 0, cprPh = 0;
+  function ecgSample(t, dt) {
+    var v = 0, i, e, d, TP = 2 * Math.PI;
+    for (i = 0; i < ev.length; i++) { e = ev[i]; d = t - e.t; if (d < -0.08 || d > 1.0) continue; v += wave(e, d); }
+    v += baseline(t);
+    var tgt = (curId === 'vt' || curId === 'vf') ? 1 : 0;
+    if (tgt) contType = curId;
+    cont += (tgt - cont) * (1 - Math.exp(-dt / 0.1));
+    if (cont > 0.003) {
+      var c;
+      if (contType === 'vt') {
+        ph1 += TP * (S.hr / 60) * dt;
+        c = 1.0 * Math.sin(ph1) + 0.35 * Math.sin(2 * ph1 + 0.7);
+      } else {
+        vp[0] += TP * (3.8 + 1.1 * Math.sin(0.8 * t)) * dt;
+        vp[1] += TP * (5.7 + 1.4 * Math.sin(1.3 * t + 1)) * dt;
+        vp[2] += TP * (8.1 + 1.6 * Math.sin(0.6 * t + 2)) * dt;
+        var am = 0.45 + 0.55 * Math.pow(Math.sin(0.5 * t + 0.3), 2);
+        c = am * (0.85 * Math.sin(vp[0]) + 0.55 * Math.sin(vp[1]) + 0.3 * Math.sin(vp[2]));
+      }
+      v = v * (1 - cont) + cont * c;
+    }
+    // 胸骨圧迫（110回/分）のノイズ：ONで滑らかに現れ、OFFで消える
+    cprLv += ((S.cpr ? 1 : 0) - cprLv) * (1 - Math.exp(-dt / 0.12));
+    if (cprLv > 0.003) {
+      cprPh += TP * (110 / 60) * dt;
+      v += cprLv * 0.7 * (1 + 0.1 * Math.sin(0.8 * t)) * (Math.sin(cprPh) + 0.42 * Math.sin(2 * cprPh + 0.5) + 0.16 * Math.sin(3 * cprPh + 1.3))
+         + cprLv * (Math.random() - 0.5) * 0.06;
+    }
+    return v;
+  }
+  // カプノグラム（挿管後の呼気CO₂波形）：10回/分、画面幅は18秒（約3呼吸）
+  var BREATH_PERIOD = 6;
+  function capSample(t, dt) {
+    var P = BREATH_PERIOD, ph = ((t % P) + P) % P, Te = 3.4;   // 呼気3.4秒、残りは吸気
+    var rise = 1 / (1 + Math.exp(-(ph - 0.30) / 0.06));        // 第II相（急な立ち上がり）
+    var desc = 1 / (1 + Math.exp((ph - Te) / 0.07));           // 吸気に入って急に下がる
+    var w = rise * (0.80 + 0.20 * Math.min(1, ph / Te)) * desc; // 第III相（肺胞プラトー、わずかに上昇）
+    var v = S.etco2 * w;
+    if (cprLv > 0.003) v += cprLv * w * S.etco2 * 0.06 * Math.sin(2 * Math.PI * (110 / 60) * t);   // 胸骨圧迫による揺れ
+    return v + (Math.random() - 0.5) * 0.25;
+  }
+
+  /* ---------------- trace renderer ---------------- */
+  var css = getComputedStyle(document.documentElement);
+  var col = function (n) { return css.getPropertyValue(n).trim(); };
+  function makeTrace(canvas, sample, yOf, color, gridVals, span) {
+    var T = { c: canvas, ctx: canvas.getContext('2d'), sample: sample, yOf: yOf, color: color, gridVals: gridVals,
+              W: 0, H: 0, dpr: 1, buf: null, lastN: null, dt: 0, span: span || SPAN };
+    T.resize = function () {
+      var r = canvas.getBoundingClientRect(), d = Math.min(window.devicePixelRatio || 1, 2);
+      var w = Math.max(100, Math.round(r.width * d)), h = Math.max(60, Math.round(r.height * d));
+      if (w === T.W && h === T.H) return;
+      canvas.width = w; canvas.height = h; T.W = w; T.H = h; T.dpr = d;
+      T.buf = new Float32Array(w).fill(NaN); T.dt = T.span / w; T.lastN = null;
+    };
+    return T;
+  }
+  function draw(T, ts) {
+    if (!T.W) return;
+    var ctx = T.ctx, W = T.W, H = T.H, dpr = T.dpr, n, i;
+    var curN = Math.floor(ts / T.dt);
+    var from = T.lastN === null ? curN - Math.floor(W * 0.9) : T.lastN + 1;
+    if (curN - from >= W) from = curN - W + 1;
+    for (n = from; n <= curN; n++) T.buf[((n % W) + W) % W] = T.sample(n * T.dt, T.dt);
+    T.lastN = curN;
+    if (T.hidden) { ctx.clearRect(0, 0, W, H); return; }
+
+    ctx.clearRect(0, 0, W, H);
+    ctx.lineWidth = dpr;
+    for (i = 0; i <= 30; i++) {
+      ctx.strokeStyle = i % 5 === 0 ? col('--grid2') : col('--grid');
+      var x = Math.round(i * W / 30) + 0.5;
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+    }
+    ctx.strokeStyle = col('--grid');
+    T.gridVals.forEach(function (gv) {
+      var y = Math.round(T.yOf(gv, H)) + 0.5;
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+    });
+
+    var cur = ((curN % W) + W) % W, gap = Math.round(W * 0.045);
+    var p = new Path2D(), pen = false;
+    for (i = 0; i < W; i++) {
+      var d = (i - cur + W) % W, v = T.buf[i];
+      if ((d > 0 && d <= gap) || v !== v) { pen = false; continue; }
+      var y2 = T.yOf(v, H);
+      if (!pen) { p.moveTo(i, y2); pen = true; } else p.lineTo(i, y2);
+    }
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    ctx.globalAlpha = 0.2; ctx.strokeStyle = T.color; ctx.lineWidth = 9 * dpr; ctx.stroke(p);
+    ctx.globalAlpha = 1; ctx.lineWidth = 3 * dpr; ctx.stroke(p);
+    var hv = T.buf[cur];
+    if (hv === hv) { ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(cur, T.yOf(hv, H), 4 * dpr, 0, 6.2832); ctx.fill(); }
+  }
+  var ecgT = makeTrace($('cEcg'), ecgSample, function (v, H) { return H * 0.62 - v * H * 0.30; }, col('--hr'), [-0.5, 0, 0.5, 1, 1.5]);
+  var plT = makeTrace($('cPl'), capSample, function (v, H) { return H * 0.88 - Math.min(v, 75) / 60 * H * 0.68; }, col('--etco2'), [0, 20, 40, 60], 18);
+  var ro = new ResizeObserver(function () { ecgT.resize(); plT.resize(); });
+  ro.observe($('cEcg').parentNode); ro.observe($('cPl').parentNode);
+
+  /* ---------------- audio ---------------- */
+  var ac = null;
+  function ensureAudio() {
+    try { ac = ac || new (window.AudioContext || window.webkitAudioContext)(); if (ac.state !== 'running') ac.resume(); } catch (_) {}
+  }
+  function beep() {
+    try {
+      ensureAudio(); if (!ac) return;
+      var o = ac.createOscillator(), g = ac.createGain(), t = ac.currentTime;
+      o.type = 'sine'; o.frequency.value = Math.max(330, 440 + (S.spo2 - 90) * 22);
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.25, t + 0.006);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
+      o.connect(g); g.connect(ac.destination); o.start(t); o.stop(t + 0.14);
+    } catch (_) {}
+  }
+
+  /* ---------------- state + DOM ---------------- */
+  function rhythmLabel() {
+    if (curId === 'nsr') {
+      if (S.hr < 60) return ['洞性徐脈', 'Sinus Bradycardia'];
+      if (S.hr > 100) return ['洞性頻脈', 'Sinus Tachycardia'];
+    }
+    var r = RH[S.rhythm]; return [r.name, r.en];
+  }
+  function tileOf(k) { return (k === 'sys' || k === 'dia') ? 'bp' : k; }
+  function getVal(k) { return S[k]; }
+  function fmt(k, v) { return k === 'temp' ? v.toFixed(1) : String(v); }
+  function shown(k) {
+    if (S.entry !== null && S.sel === k) return S.vis[tileOf(k)] ? S.entry : S.entry.replace(/./g, '•');
+    return fmt(k, k === 'hr' ? effHR() : S[k]);
+  }
+
+  function render() {
+    var pl = pulseless(), i;
+    var lab = rhythmLabel();
+    $('rname').textContent = S.showName ? lab[0] : '';
+    $('ren').textContent = S.showName ? lab[1] : '';
+
+    var entering = S.entry !== null;
+    function put(id, k, text) {
+      var el = $(id);
+      el.textContent = (!S.vis[tileOf(k)] && !(entering && S.sel === k)) ? '' : text;
+      el.classList.toggle('entering', entering && S.sel === k);
+    }
+    put('vHr', 'hr', pl && !(entering && S.sel === 'hr') ? '--' : shown('hr'));
+    put('vSpo2', 'spo2', pl && !(entering && S.sel === 'spo2') ? '--' : shown('spo2'));
+    put('vSys', 'sys', pl && !(entering && S.sel === 'sys') ? '--' : shown('sys'));
+    put('vDia', 'dia', pl && !(entering && S.sel === 'dia') ? '--' : shown('dia'));
+    put('vTemp', 'temp', shown('temp'));
+    put('vEtco2', 'etco2', shown('etco2'));
+    $('vSys').classList.toggle('selp', S.sel === 'sys');
+    $('vDia').classList.toggle('selp', S.sel === 'dia');
+    $('uBp').textContent = (pl || !S.vis.bp) ? 'mmHg' : 'mmHg　平均 ' + Math.round(S.dia + (S.sys - S.dia) / 3);
+
+    document.querySelectorAll('.tile').forEach(function (t) { t.classList.toggle('sel', S.sel !== null && t.dataset.tile === tileOf(S.sel)); });
+    var hints = { hHr: 'hr', hSpo2: 'spo2', hBp: 'bp', hTemp: 'temp', hEtco2: 'etco2' };
+    Object.keys(hints).forEach(function (id) {
+      var el = $(id), tile = hints[id], on = S.sel !== null && tileOf(S.sel) === tile, txt = '';
+      if (on) {
+        var part = S.sel === 'sys' ? '収縮期 ' : S.sel === 'dia' ? '拡張期 ' : '';
+        var lr = tile === 'bp' ? '←→ 収縮期/拡張期　' : '';
+        txt = entering ? part + '入力中　' + lr + 'Enter 確定　Esc 取消' : part + lr + '↑↓ 変更　Enter 入力　Space ' + (S.vis[tile] ? '非表示' : '表示');
+      }
+      el.textContent = txt;
+    });
+
+    document.querySelectorAll('.tile').forEach(function (t) { t.classList.toggle('off', !S.vis[t.dataset.tile]); });
+    document.querySelector('.panel.ecg').classList.toggle('off', !S.vis.ecg);
+    document.querySelector('.panel.pleth').classList.toggle('off', !S.vis.pleth);
+    ecgT.hidden = !S.vis.ecg; plT.hidden = !S.vis.pleth;
+
+    // alarms
+    var al = [], flags = { hr: false, spo2: false, bp: false, temp: false, etco2: false };
+    function add(t, tile) { if (!S.vis[tile]) return; al.push(t); flags[tile] = true; }
+    if (pl) { add('脈拍・SpO₂ 測定不能', 'hr'); flags.spo2 = S.vis.spo2; flags.bp = S.vis.bp; }
+    else {
+      var h = effHR();
+      if (h > 120) add('頻脈', 'hr');
+      if (h < 50) add('徐脈', 'hr');
+      if (S.spo2 < 90) add('SpO₂ 低下', 'spo2');
+      if (S.sys > 180) add('高血圧', 'bp');
+      if (S.sys < 90) add('低血圧', 'bp');
+    }
+    if (S.temp > 38) add('発熱', 'temp');
+    if (S.temp < 36) add('低体温', 'temp');
+    if (S.etco2 > 50) add('EtCO₂ 上昇', 'etco2');
+    if (S.etco2 < 30) add('EtCO₂ 低下', 'etco2');
+    if (S.showName && S.vis.ecg) {
+      if (curId === 'vf') al.unshift('心室細動');
+      if (curId === 'vt') al.unshift('心室頻拍');
+      if (curId === 'asys') al.unshift('心静止');
+    }
+    var box = $('alarms'); box.textContent = '';
+    if (S.alarms) al.forEach(function (a) { var c = document.createElement('span'); c.className = 'chip'; c.textContent = a; box.appendChild(c); });
+    document.querySelectorAll('.tile').forEach(function (t) { t.classList.toggle('alarm', S.alarms && !!flags[t.dataset.tile]); });
+    $('snd').textContent = '心拍音 ' + (S.sound ? 'ON' : 'OFF') + '　音声ガイド ' + (voiceOn ? 'ON' : 'OFF') + (S.alarms ? '' : '　警報非表示');
+
+    renderSheet();
+  }
+
+  /* ---------------- 解析・除細動 ---------------- */
+  var ANALYZE_S = 5, CHARGE_S = 3, ENERGY = 200;
+  var D = { st: 'idle', t0: 0, outcome: 'sinus', prev: 0, warnText: '', warnUntil: 0, shownTxt: null, shownCls: null };
+  var timers = [];
+  var OUTCOMES = [['sinus', '洞調律に回復'], ['same', '除細動前のリズムが続く'], ['asys', '心静止になる']];
+  var cText = $('ctext'), cFill = $('cfill'), cMsg = $('cmsg'), bA = $('bAnalyze'), bS = $('bShock');
+  /* --- 音声ガイドと効果音 --- */
+  var voiceOn = true, tone = null, lastReadyBeep = 0;
+  function cancelSpeech() { try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch (_) {} }
+  var jaVoices = [], speakT = null;
+  function loadVoices() {
+    try { jaVoices = window.speechSynthesis.getVoices().filter(function (v) { return /^ja/i.test(v.lang) || /japan/i.test(v.name); }); } catch (_) {}
+  }
+  if (window.speechSynthesis) {
+    loadVoices();
+    try { window.speechSynthesis.addEventListener('voiceschanged', loadVoices); } catch (_) { window.speechSynthesis.onvoiceschanged = loadVoices; }
+  }
+  // 高品質（拡張・プレミアム）の声と男性の声を優先して選ぶ
+  function pickVoice() {
+    var best = null, bs = -1;
+    jaVoices.forEach(function (v) {
+      var n = v.name, s = 0;
+      if (/premium|プレミアム/i.test(n)) s += 3; else if (/enhanced|拡張/i.test(n)) s += 2;
+      if (/otoya|ichiro|keita|takeru|hattori|男/i.test(n) && !/female/i.test(n)) s += 4;
+      if (/kyoko|きょうこ|o-ren|hattori/i.test(n)) s += 1;   // 自然な日本語の標準ボイス
+      if (v.localService) s += 1;
+      if (s > bs) { bs = s; best = v; }
+    });
+    return best;
+  }
+  function doSpeak(text) {
+    try {
+      if (!jaVoices.length) loadVoices();
+      // 読みの指定（読み上げエンジンが誤読しないようにひらがなで渡す）
+      var spoken = text.replace(/除細動/g, 'ジョサイドウ').replace(/胸骨圧迫/g, 'きょうこつあっぱく');
+      var u = new SpeechSynthesisUtterance(spoken);
+      u.lang = 'ja-JP';
+      // 男性の声を優先（Otoya / Ichiro など）。見つからなければ日本語の声のピッチを下げて男声寄りにする
+      var pv = pickVoice(), male = !!pv && /otoya|ichiro|keita|takeru|hattori|男/i.test(pv.name) && !/female/i.test(pv.name);
+      u.voice = pv || null;
+      u.rate = 1.2;
+      u.pitch = 1.0;   // 極端にピッチを下げると不自然になるため控えめに
+      window.speechSynthesis.speak(u);
+    } catch (_) {}
+  }
+  function speak(text) {
+    if (!voiceOn || !window.speechSynthesis) return;
+    var ss = window.speechSynthesis;
+    clearTimeout(speakT);
+    try {
+      // iPad の Safari は cancel() の直後に speak() すると無音になることがあるため、再生中のときだけ少し待つ
+      if (ss.speaking || ss.pending) { ss.cancel(); speakT = setTimeout(function () { doSpeak(text); }, 150); }
+      else doSpeak(text);
+    } catch (_) {}
+  }
+  function stopTone() { if (tone) { try { tone.stop(); } catch (_) {} tone = null; } }
+  function pip(freq, dur, vol, type) {
+    try {
+      ensureAudio(); if (!ac) return;
+      var o = ac.createOscillator(), g = ac.createGain(), t = ac.currentTime;
+      o.type = type || 'sine'; o.frequency.value = freq;
+      g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      o.connect(g); g.connect(ac.destination); o.start(t); o.stop(t + dur + 0.02);
+    } catch (_) {}
+  }
+  function chargeTone() {
+    try {
+      ensureAudio(); if (!ac) return; stopTone();
+      var o = ac.createOscillator(), g = ac.createGain(), t = ac.currentTime;
+      o.type = 'sawtooth';
+      o.frequency.setValueAtTime(220, t); o.frequency.exponentialRampToValueAtTime(1400, t + CHARGE_S);
+      g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.05, t + 0.2);
+      g.gain.setValueAtTime(0.05, t + CHARGE_S - 0.05); g.gain.exponentialRampToValueAtTime(0.0001, t + CHARGE_S + 0.05);
+      o.connect(g); g.connect(ac.destination); o.start(t); o.stop(t + CHARGE_S + 0.1);
+      tone = o;
+    } catch (_) {}
+  }
+  function onState(st) {
+    stopTone();
+    if (st === 'idle') { cancelSpeech(); return; }
+    if (!voiceOn) return;
+    switch (st) {
+      case 'analyzing': speak('解析中です。患者から離れてください。'); break;
+      case 'charging': speak('除細動が必要です。充電中です。'); chargeTone(); break;
+      case 'ready': speak('充電完了。患者から離れてください。除細動ボタンを押してください。'); lastReadyBeep = perf(); break;
+      case 'noshock': speak('除細動は不要です。反応がなければ、胸骨圧迫を開始してください。'); break;
+      case 'shocked':
+        pip(90, 0.35, 0.5, 'square'); pip(1800, 0.04, 0.15, 'square');
+        speak('除細動を実施しました。直ちに胸骨圧迫を再開してください。'); break;
+    }
+  }
+  function warn(t, sec) { D.warnText = t; D.warnUntil = perf() + sec; }
+  function startAnalyze() {
+    if (D.st === 'analyzing' || D.st === 'charging') return;
+    D.st = 'analyzing'; D.t0 = perf(); D.warnUntil = 0;
+  }
+  function flash() {
+    var f = $('flash');
+    if (f.animate && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) f.animate([{ opacity: 0.55 }, { opacity: 0 }], { duration: 350, easing: 'ease-out' });
+  }
+  function doShock() {
+    if (D.st !== 'ready') { warn('解析後、除細動の指示が出てから押せます', 2.5); return; }
+    var now = perf();
+    D.st = 'shocked'; D.prev = S.rhythm;
+    ev.push({ t: now, k: 'shock' });
+    flash();
+    timers = [
+      { at: now + DELAY, fn: function () { setRhythm(9, true); } },
+      { at: now + DELAY + 2.5, fn: function () {
+          var idx = D.outcome === 'sinus' ? 0 : D.outcome === 'same' ? D.prev : 9;
+          if (idx !== 9) setRhythm(idx, true);
+      } }
+    ];
+  }
+  function dUpdate(now) {
+    var txt, cls = 'idle', prog = 0;
+    if (now < D.warnUntil) { txt = D.warnText; cls = 'warn'; }
+    else switch (D.st) {
+      case 'analyzing': txt = '解析中… 患者から離れてください'; cls = 'busy'; prog = (now - D.t0) / ANALYZE_S; break;
+      case 'charging': txt = '除細動が必要です。充電中… ' + ENERGY + ' J'; cls = 'shock'; prog = (now - D.t0) / CHARGE_S; break;
+      case 'ready': txt = '充電完了。患者から離れて、除細動ボタンを押してください'; cls = 'shock'; prog = 1; break;
+      case 'noshock': txt = '除細動は不要です。反応がなければ胸骨圧迫を実施してください'; cls = 'cpr'; break;
+      case 'shocked': txt = '除細動を実施しました。直ちに胸骨圧迫を再開してください'; cls = 'cpr'; break;
+      default: txt = '';
+    }
+    if (txt !== D.shownTxt) { cText.textContent = txt; D.shownTxt = txt; }
+    if (cls !== D.shownCls) { cMsg.className = 'cmsg ' + cls; D.shownCls = cls; }
+    cFill.style.width = (Math.round(clamp(prog, 0, 1) * 1000) / 10) + '%';
+    bA.disabled = D.st === 'analyzing' || D.st === 'charging';
+    bS.disabled = D.st !== 'ready';
+    bS.classList.toggle('ready', D.st === 'ready');
+  }
+  function dTick(now) {
+    var due = timers.filter(function (t) { return now >= t.at; });
+    timers = timers.filter(function (t) { return now < t.at; });
+    due.forEach(function (t) { t.fn(); });
+    if (D.st === 'analyzing' && now - D.t0 >= ANALYZE_S) {
+      if (curId === 'vt' || curId === 'vf') { D.st = 'charging'; D.t0 = now; } else D.st = 'noshock';
+    } else if (D.st === 'charging' && now - D.t0 >= CHARGE_S) {
+      D.st = 'ready';
+    }
+    if (D.st !== D.voiced) { D.voiced = D.st; onState(D.st); }
+    if (D.st === 'ready' && voiceOn && now - lastReadyBeep > 1.0) { lastReadyBeep = now; pip(1000, 0.15, 0.12); }
+    dUpdate(now);
+  }
+
+  function setRhythm(i, sim) {
+    if (!sim) {
+      timers = [];
+      if (D.st === 'analyzing' || D.st === 'charging' || D.st === 'ready') { D.st = 'idle'; warn('リズムが変化したため解除しました。もう一度解析してください', 3); }
+      else if (D.st === 'noshock' || D.st === 'shocked') D.st = 'idle';
+    }
+    S.rhythm = (i + RH.length) % RH.length;
+    var r = RH[S.rhythm];
+    curId = r.id;
+    if (r.hr) S.hr = r.hr;
+    if (S.entry !== null) S.entry = null;
+    resetGen(false);
+    render();
+  }
+  function setVal(k, v) {
+    if (!isFinite(v)) return;
+    if (k === 'hr') { var l = hrLimits(); S.hr = Math.round(clamp(v, l[0], l[1])); }
+    else if (k === 'spo2') S.spo2 = Math.round(clamp(v, 50, 100));
+    else if (k === 'sys') { S.sys = Math.round(clamp(v, 40, 260)); if (S.dia > S.sys - 10) S.dia = Math.max(20, S.sys - 10); }
+    else if (k === 'dia') { S.dia = Math.round(clamp(v, 20, 160)); if (S.sys < S.dia + 10) S.sys = S.dia + 10; }
+    else if (k === 'temp') S.temp = Math.round(clamp(v, 30, 43) * 10) / 10;
+    else if (k === 'etco2') S.etco2 = Math.round(clamp(v, 0, 100));
+    render();
+  }
+  function resetAll() {
+    S.spo2 = 98; S.sys = 120; S.dia = 80; S.temp = 36.6; S.etco2 = 38; S.cpr = false; S.entry = null;
+    D.st = 'idle'; D.warnUntil = 0; timers = [];
+    setRhythm(0);
+  }
+
+  /* ---------------- input ---------------- */
+  var helpOpen = function () { return !$('help').hidden; };
+  function toggleHelp(on) { $('help').hidden = on === undefined ? helpOpen() : !on; }
+  function selectParam(k) {
+    if (k === 'bp') S.sel = S.sel === 'sys' ? 'dia' : 'sys';
+    else S.sel = k;
+    S.entry = null; render();
+  }
+  function switchBp(nk) {
+    var cur = S.sel;
+    if ((cur !== 'sys' && cur !== 'dia') || nk === cur) return;
+    if (S.entry !== null) {
+      var typed = S.entry; S.entry = null;
+      if (typed !== '') setVal(cur, parseFloat(typed));
+      S.sel = nk; S.entry = '';
+    } else S.sel = nk;
+    render();
+  }
+  function commitEntry() {
+    var s = S.entry, k = S.sel; S.entry = null;
+    if (s !== '' && s !== '.') {
+      var v;
+      if (k === 'temp' && s.indexOf('.') < 0 && s.length >= 3) v = parseFloat(s.slice(0, -1) + '.' + s.slice(-1));
+      else v = parseFloat(s);
+      setVal(k, v);
+    }
+    render();
+  }
+
+  window.addEventListener('keydown', function (e) {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    var k = e.key, lk = k.length === 1 ? k.toLowerCase() : k;
+
+    if (helpOpen()) {
+      if (k === 'Escape' || lk === 'h' || k === '?') { e.preventDefault(); toggleHelp(false); }
+      return;
+    }
+    if (sheetMode === 'rh' || sheetMode === 'menu' || sheetMode === 'link') { if (k === 'Escape') { e.preventDefault(); closeSheet(); } return; }
+    if (S.entry !== null) {
+      e.preventDefault();
+      if (/^[0-9]$/.test(k)) { if (S.entry.length < 5) S.entry += k; }
+      else if (k === '.' && S.entry.indexOf('.') < 0 && S.sel === 'temp') S.entry += '.';
+      else if (k === 'ArrowLeft' || k === 'ArrowRight') switchBp(k === 'ArrowLeft' ? 'sys' : 'dia');
+      else if (k === 'Backspace') S.entry = S.entry.slice(0, -1);
+      else if (k === 'Enter') { commitEntry(); return; }
+      else if (k === 'Escape') S.entry = null;
+      render(); return;
+    }
+    if (sheetMode === 'num' && /^[0-9]$/.test(k)) { e.preventDefault(); npKey(k); return; }
+    if (k === '-') { e.preventDefault(); setRhythm(RH.findIndex(function (r) { return r.key === '-'; })); return; }
+    if (/^[0-9]$/.test(k)) { e.preventDefault(); setRhythm(RH.findIndex(function (r) { return r.key === k; })); return; }
+    switch (k) {
+      case 'ArrowLeft': case 'ArrowRight':
+        e.preventDefault();
+        if (S.sel === null) { S.sel = k === 'ArrowLeft' ? 'sys' : 'dia'; render(); }
+        else switchBp(k === 'ArrowLeft' ? 'sys' : 'dia');
+        return;
+      case 'ArrowUp': case 'ArrowDown': case 'PageUp': case 'PageDown':
+        e.preventDefault();
+        if (!S.sel) return;
+        var dir = (k === 'ArrowUp' || k === 'PageUp') ? 1 : -1;
+        var big = e.shiftKey || k === 'PageUp' || k === 'PageDown';
+        var step = S.sel === 'temp' ? (big ? 1 : 0.1) : (big ? 10 : 1);
+        setVal(S.sel, getVal(S.sel) + dir * step);
+        return;
+      case 'Enter': e.preventDefault(); if (S.sel) { S.entry = ''; render(); } return;
+      case 'Escape': S.sel = null; render(); return;
+      case ' ': e.preventDefault(); revealToggle(); return;
+      case '?': toggleHelp(true); return;
+    }
+    switch (lk) {
+      case 'p': selectParam('hr'); break;
+      case 's': selectParam('spo2'); break;
+      case 'b': selectParam('bp'); break;
+      case 't': selectParam('temp'); break;
+      case 'c': selectParam('etco2'); break;
+      case 'h': toggleHelp(true); break;
+      case 'n': S.showName = !S.showName; render(); break;
+      case 'e': S.vis.ecg = !S.vis.ecg; render(); break;
+      case 'w': S.vis.pleth = !S.vis.pleth; render(); break;
+      case 'v':
+        var anyHidden = Object.keys(S.vis).some(function (x) { return !S.vis[x]; });
+        Object.keys(S.vis).forEach(function (x) { S.vis[x] = anyHidden; });
+        S.showName = anyHidden;
+        render(); break;
+      case 'a': S.alarms = !S.alarms; render(); break;
+      case 'm': S.sound = !S.sound; if (S.sound) { ensureAudio(); beep(); } render(); break;
+      case 'r': resetAll(); break;
+      case 'k': startAnalyze(); break;
+      case 'd': doShock(); break;
+      case 'g':
+        voiceOn = !voiceOn;
+        if (voiceOn) speak('音声ガイドを入にしました。'); else { cancelSpeech(); stopTone(); }
+        render(); break;
+      case 'o':
+        var oi = (OUTCOMES.findIndex(function (o) { return o[0] === D.outcome; }) + 1) % OUTCOMES.length;
+        D.outcome = OUTCOMES[oi][0]; paintOutcome(); toast('除細動後：' + OUTCOMES[oi][1]);
+        break;
+      case 'f':
+        try {
+          var de = document.documentElement;
+          if (document.fullscreenElement || document.webkitFullscreenElement) (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+          else { var rq = de.requestFullscreen || de.webkitRequestFullscreen; if (rq) { var pr = rq.call(de); if (pr && pr.catch) pr.catch(function () {}); } }
+        } catch (_) {}
+        break;
+    }
+  });
+
+  // タップ＝表示／非表示、長押し＝変更パネル（テンキー／リズム選択）
+  document.querySelectorAll('.tile').forEach(function (t) {
+    attachPress(t, function () {
+      var k = t.dataset.tile; S.vis[k] = !S.vis[k]; render();
+    }, function (e) {
+      var part = e.target.closest && e.target.closest('.val [data-k]'), nk;
+      if (t.dataset.tile === 'bp') {
+        if (part) nk = part.dataset.k;
+        else { var sl = t.querySelector('.sl').getBoundingClientRect(); nk = e.clientX < sl.left + sl.width / 2 ? 'sys' : 'dia'; }
+        if (S.sel === 'sys' || S.sel === 'dia') { switchBp(nk); sheetMode = 'num'; render(); return; }
+        S.sel = nk; S.entry = null; sheetMode = 'num'; render(); return;
+      }
+      S.sel = t.dataset.k; S.entry = null; sheetMode = 'num'; render();
+    });
+  });
+  var LONG_MS = 450;
+  function attachPress(el, onTap, onLong) {
+    var timer = null, sx = 0, sy = 0, fired = false, active = false, last = null;
+    function clear() { clearTimeout(timer); timer = null; el.classList.remove('pressing'); }
+    el.addEventListener('pointerdown', function (e) {
+      if (e.button > 0) return;
+      active = true; fired = false; sx = e.clientX; sy = e.clientY; last = e; clear();
+      timer = setTimeout(function () {
+        timer = null; fired = true; el.classList.remove('pressing');
+        try { if (navigator.vibrate) navigator.vibrate(15); } catch (_) {}
+        onLong(last);
+      }, LONG_MS);
+      setTimeout(function () { if (timer) el.classList.add('pressing'); }, 120);
+    });
+    el.addEventListener('pointermove', function (e) {
+      last = e;
+      if (active && timer && Math.abs(e.clientX - sx) + Math.abs(e.clientY - sy) > 14) { clear(); active = false; }
+    });
+    el.addEventListener('pointerup', function () {
+      var wasTap = active && !fired && timer !== null;
+      clear(); active = false;
+      if (wasTap) onTap();
+    });
+    ['pointercancel', 'pointerleave'].forEach(function (n) { el.addEventListener(n, function () { clear(); active = false; }); });
+    el.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+  }
+  var ORDER = ['ecg', 'hr', 'spo2', 'bp', 'temp', 'etco2', 'pleth'];
+  function revealToggle() {
+    if (S.sel) { var t = tileOf(S.sel); S.vis[t] = !S.vis[t]; }
+    else {
+      var nx = ORDER.find(function (x) { return !S.vis[x]; });
+      if (nx) S.vis[nx] = true; else if (!S.showName) S.showName = true;
+    }
+    render();
+  }
+  bA.addEventListener('click', function () { startAnalyze(); bA.blur(); });
+  bS.addEventListener('click', function () { doShock(); bS.blur(); });
+  $('hOpen').addEventListener('click', function () { toggleHelp(true); $('hOpen').blur(); });
+  $('hClose').addEventListener('click', function () { toggleHelp(false); $('hClose').blur(); });
+  // iPad / iPhone の Safari は、タップ（touchend / click）の中で音声を一度鳴らさないと、以後の音声が出ない
+  var unlocked = false;
+  function unlock() {
+    ensureAudio();
+    if (unlocked && ac && ac.state === 'running') return;
+    try {   // 無音を1回再生して WebAudio を解除
+      if (ac) { var sb = ac.createBuffer(1, 1, 22050), src = ac.createBufferSource(); src.buffer = sb; src.connect(ac.destination); src.start(0); }
+    } catch (_) {}
+    if (unlocked) return;
+    try {
+      if (window.speechSynthesis) {
+        var u = new SpeechSynthesisUtterance('あ'); u.volume = 0; u.lang = 'ja-JP';
+        window.speechSynthesis.speak(u);
+        unlocked = true;
+      }
+    } catch (_) {}
+  }
+  ['touchend', 'click', 'pointerup', 'keydown'].forEach(function (n) { window.addEventListener(n, unlock, true); });
+  var toastT;
+  function toast(t) {
+    var el = $('toast'); el.textContent = t; el.hidden = false;
+    clearTimeout(toastT); toastT = setTimeout(function () { el.hidden = true; }, 1600);
+  }
+  function paintOutcome() { render(); }
+
+  /* ---------------- タッチ操作：テンキー・リズム選択・メニュー ---------------- */
+  var sheetMode = null;   // null | 'num' | 'rh' | 'menu'
+  var TCOL = { hr: 'var(--hr)', spo2: 'var(--spo2)', bp: 'var(--bp)', temp: 'var(--temp)', etco2: 'var(--etco2)' };
+  var TNAME = { hr: ['脈拍', '/min'], spo2: ['SpO₂', '%'], bp: ['血圧', 'mmHg'], temp: ['体温', '℃'], etco2: ['EtCO₂', 'mmHg'] };
+  var narrowMQ = window.matchMedia('(max-width: 820px)');
+  var lastNumTile = null, resetArm = 0;
+
+  function openSheet(m) { S.sel = null; S.entry = null; sheetMode = m; render(); }
+  function closeSheet(commit) {
+    if (sheetMode === 'num') {
+      if (commit && S.entry !== null) commitEntry();
+      S.entry = null; S.sel = null;
+    }
+    sheetMode = null; render();
+  }
+  function stepSel(dir, big) {
+    if (!S.sel) return;
+    if (S.entry !== null) commitEntry();
+    var step = S.sel === 'temp' ? (big ? 1 : 0.1) : (big ? 10 : 1);
+    setVal(S.sel, getVal(S.sel) + dir * step);
+  }
+  function npKey(ch) {
+    if (!S.sel) return;
+    if (S.entry === null) S.entry = '';
+    if (ch === 'bs') S.entry = S.entry.slice(0, -1);
+    else if (ch === '.') { if (S.sel === 'temp' && S.entry.indexOf('.') < 0) S.entry += '.'; }
+    else if (S.entry.length < 5) S.entry += ch;
+    render();
+  }
+  function anyHidden() { return Object.keys(S.vis).some(function (x) { return !S.vis[x]; }); }
+  function toggleAll() { var a = anyHidden(); Object.keys(S.vis).forEach(function (x) { S.vis[x] = a; }); S.showName = a; }
+  function toggleFull() {
+    try {
+      var de = document.documentElement;
+      if (document.fullscreenElement || document.webkitFullscreenElement) (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+      else { var rq = de.requestFullscreen || de.webkitRequestFullscreen; if (rq) { var pr = rq.call(de); if (pr && pr.catch) pr.catch(function () {}); } }
+    } catch (_) {}
+  }
+  // 押し続けると連続で変化するボタン
+  function holdRepeat(btn, fn) {
+    var t1, t2;
+    function stop() { clearTimeout(t1); clearInterval(t2); }
+    btn.addEventListener('pointerdown', function (e) { e.preventDefault(); stop(); fn(); t1 = setTimeout(function () { t2 = setInterval(fn, 90); }, 450); });
+    ['pointerup', 'pointercancel', 'pointerleave'].forEach(function (n) { btn.addEventListener(n, stop); });
+  }
+
+  // テンキー
+  ['7', '8', '9', '4', '5', '6', '1', '2', '3', 'bs', '0', '.'].forEach(function (ch) {
+    var b = document.createElement('button'); b.type = 'button'; b.className = 'tb';
+    if (ch === 'bs') { b.textContent = '⌫'; b.setAttribute('aria-label', '1文字消す'); } else b.textContent = ch;
+    if (ch === '.') b.id = 'npDot';
+    b.addEventListener('click', function () { npKey(ch); });
+    $('npPad').appendChild(b);
+  });
+  var stepBtns = [];
+  [[-1, true], [-1, false], [1, false], [1, true]].forEach(function (s) {
+    var b = document.createElement('button'); b.type = 'button'; b.className = 'tb';
+    holdRepeat(b, function () { stepSel(s[0], s[1]); });
+    $('npStep').appendChild(b); stepBtns.push(b);
+  });
+  $('npTsys').addEventListener('click', function () { switchBp('sys'); });
+  $('npTdia').addEventListener('click', function () { switchBp('dia'); });
+  $('npVis').addEventListener('click', function () { if (S.sel) { var t = tileOf(S.sel); S.vis[t] = !S.vis[t]; render(); } });
+  $('npOk').addEventListener('click', function () { closeSheet(true); });
+  $('npCancel').addEventListener('click', function () { closeSheet(false); });
+  $('npX').addEventListener('click', function () { closeSheet(false); });
+
+  // リズム選択（心電図をタップ）
+  var rgBtns = [];
+  RH.forEach(function (r, idx) {
+    var b = document.createElement('button'); b.type = 'button'; b.className = 'tb';
+    var n = document.createElement('span'); n.textContent = r.name;
+    var s = document.createElement('small'); s.textContent = r.en;
+    b.appendChild(n); b.appendChild(s);
+    b.addEventListener('click', function () { setRhythm(idx); closeSheet(); });
+    $('rgrid').appendChild(b); rgBtns.push(b);
+  });
+  $('rhEcg').addEventListener('click', function () { S.vis.ecg = !S.vis.ecg; render(); });
+  $('rhName').addEventListener('click', function () { S.showName = !S.showName; render(); });
+  $('mX').addEventListener('click', function () { closeSheet(); });
+  $('shModal').addEventListener('click', function (e) { if (e.target === this) closeSheet(); });
+  attachPress(document.querySelector('.panel.ecg'), function () { S.vis.ecg = !S.vis.ecg; render(); }, function () { openSheet('rh'); });
+  attachPress(document.querySelector('.panel.pleth'), function () { S.vis.pleth = !S.vis.pleth; render(); }, function () {});
+  $('mOpen').addEventListener('click', function () { openSheet('menu'); $('mOpen').blur(); });
+
+  // メニュー（fn が true を返すと閉じる）
+  var MENU = [
+    { label: function () { return anyHidden() ? 'すべて表示' : 'すべて非表示'; }, fn: toggleAll },
+    { label: function () { return 'カプノグラム'; }, on: function () { return S.vis.pleth; }, fn: function () { S.vis.pleth = !S.vis.pleth; } },
+    { label: function () { return 'リズム名'; }, on: function () { return S.showName; }, fn: function () { S.showName = !S.showName; } },
+    { label: function () { return '胸骨圧迫'; }, on: function () { return S.cpr; }, fn: function () { S.cpr = !S.cpr; } },
+    { label: function () { return '警報表示'; }, on: function () { return S.alarms; }, fn: function () { S.alarms = !S.alarms; } },
+    { label: function () { return '心拍音'; }, on: function () { return S.sound; }, fn: function () { S.sound = !S.sound; if (S.sound) { ensureAudio(); beep(); } } },
+    { label: function () { return '音声ガイド'; }, on: function () { return voiceOn; }, fn: function () { voiceOn = !voiceOn; if (voiceOn) speak('音声ガイドを入にしました。'); else { cancelSpeech(); stopTone(); } } },
+    { label: function () { return '音声テスト'; }, fn: function () { voiceOn = true; speak('音声ガイドのテストです。解析中です。患者から離れてください。'); } },
+    { label: function () { return '全画面'; }, fn: function () { toggleFull(); return true; } },
+    { label: function () { return LK.count ? 'リモコン接続（接続中）' : 'リモコン接続'; }, fn: function () { openSheet('link'); } },
+    { label: function () { return 'ヘルプ'; }, fn: function () { closeSheet(); toggleHelp(true); } },
+    { label: function () { return perf() - resetArm < 3 ? 'もう一度タップで初期化' : '初期値に戻す'; }, danger: true,
+      fn: function () { if (perf() - resetArm < 3) { resetArm = 0; resetAll(); return true; } resetArm = perf(); setTimeout(render, 3100); } }
+  ];
+  var mBtns = [];
+  MENU.forEach(function (m) {
+    var b = document.createElement('button'); b.type = 'button'; b.className = 'tb' + (m.danger ? ' danger' : '');
+    b.addEventListener('click', function () { if (m.fn() === true) closeSheet(); else render(); });
+    $('mItems').appendChild(b); mBtns.push(b);
+  });
+  OUTCOMES.forEach(function (o) {
+    var b = document.createElement('button'); b.type = 'button'; b.className = 'tb'; b.dataset.id = o[0]; b.textContent = o[1];
+    b.addEventListener('click', function () { D.outcome = o[0]; paintOutcome(); render(); });
+    $('mOut').appendChild(b);
+  });
+
+  function renderSheet() {
+    if (sheetMode === 'num' && !S.sel) sheetMode = null;
+    var m = sheetMode;
+    $('shNum').hidden = m !== 'num';
+    $('shModal').hidden = !(m === 'rh' || m === 'menu' || m === 'link');
+    $('shRh').hidden = m !== 'rh';
+    $('shMenu').hidden = m !== 'menu';
+    $('shLink').hidden = m !== 'link';
+    document.body.classList.toggle('numopen', m === 'num');
+    if (m !== 'num') lastNumTile = null;
+
+    if (m === 'num') {
+      var tk = tileOf(S.sel), nm = TNAME[tk], typing = S.entry !== null, d = $('npDisp');
+      $('shNum').style.setProperty('--c', TCOL[tk]);
+      $('npName').textContent = nm[0]; $('npUnit').textContent = nm[1];
+      $('npTabs').hidden = tk !== 'bp';
+      ['sys', 'dia'].forEach(function (k) {
+        var on = S.sel === k;
+        $('npT' + k).classList.toggle('on', on);
+        $('npV' + k).textContent = (typing && on) ? (S.entry || '–') : S[k];
+      });
+      d.textContent = typing ? S.entry : fmt(S.sel, S.sel === 'hr' ? effHR() : S[S.sel]);
+      d.classList.toggle('cur', !typing); d.classList.toggle('entering', typing);
+      var lbl = tk === 'temp' ? ['−1.0', '−0.1', '＋0.1', '＋1.0'] : ['−10', '−1', '＋1', '＋10'];
+      stepBtns.forEach(function (b, i) { b.textContent = lbl[i]; });
+      $('npDot').disabled = S.sel !== 'temp';
+      var vb = $('npVis'); vb.textContent = S.vis[tk] ? '表示中' : '非表示'; vb.classList.toggle('on', !!S.vis[tk]);
+      if (narrowMQ.matches && lastNumTile !== tk) {
+        lastNumTile = tk;
+        var tl = document.querySelector('.tile[data-tile="' + tk + '"]');
+        if (tl && tl.scrollIntoView) tl.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      }
+    } else if (m === 'rh') {
+      $('mTitle').textContent = 'リズムを選択';
+      var e1 = $('rhEcg'), e2 = $('rhName');
+      e1.textContent = '心電図　' + (S.vis.ecg ? '表示中' : '非表示'); e1.classList.toggle('on', S.vis.ecg);
+      e2.textContent = 'リズム名　' + (S.showName ? '表示中' : '非表示'); e2.classList.toggle('on', S.showName);
+      rgBtns.forEach(function (b, i) { b.classList.toggle('on', i === S.rhythm); });
+    } else if (m === 'link') {
+      $('mTitle').textContent = 'iPhoneリモコン接続'; paintLink();
+    } else if (m === 'menu') {
+      $('mTitle').textContent = 'メニュー';
+      MENU.forEach(function (mi, i) {
+        var b = mBtns[i], on = mi.on ? mi.on() : undefined;
+        b.textContent = mi.label();
+        if (on !== undefined) { var s = document.createElement('span'); s.className = 'st'; s.textContent = on ? 'ON' : 'OFF'; b.appendChild(s); }
+        b.classList.toggle('on', on === true);
+      });
+      $('mOut').querySelectorAll('button').forEach(function (b) { b.classList.toggle('on', b.dataset.id === D.outcome); });
+    }
+  }
+
+  // iPad：ピンチ拡大・長押しメニューを無効化し、画面スリープを防ぐ
+  ['gesturestart', 'gesturechange', 'gestureend'].forEach(function (n) { document.addEventListener(n, function (e) { e.preventDefault(); }); });
+  document.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+  // 画面の自動ロックを防ぐ：Wake Lock を使い、使えない場合は、音の出ない小さな動画を繰り返し再生する
+  var wakeLock = null, nsVideo = null, awakeOn = false;
+  function startNoSleep() {
+    try {
+      if (!nsVideo) {
+        var v = document.createElement('video');
+        v.setAttribute('playsinline', ''); v.setAttribute('muted', ''); v.setAttribute('loop', ''); v.muted = true; v.loop = true;
+        v.style.cssText = 'position:fixed;left:0;top:0;width:2px;height:2px;opacity:0.02;pointer-events:none;z-index:-1';
+        v.src = 'data:video/mp4;base64,AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAM3bW9vdgAAAGxtdmhkAAAAAAAAAAAAAAAAAAAD6AAAA+gAAQAAAQAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAmF0cmFrAAAAXHRraGQAAAADAAAAAAAAAAAAAAABAAAAAAAAA+gAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAABAAAAAQAAAAAAAkZWR0cwAAABxlbHN0AAAAAAAAAAEAAAPoAAAAAAABAAAAAAHZbWRpYQAAACBtZGhkAAAAAAAAAAAAAAAAAAAoAAAAKABVxAAAAAAALWhkbHIAAAAAAAAAAHZpZGUAAAAAAAAAAAAAAABWaWRlb0hhbmRsZXIAAAABhG1pbmYAAAAUdm1oZAAAAAEAAAAAAAAAAAAAACRkaW5mAAAAHGRyZWYAAAAAAAAAAQAAAAx1cmwgAAAAAQAAAURzdGJsAAAAuHN0c2QAAAAAAAAAAQAAAKhhdmMxAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAABAAEABIAAAASAAAAAAAAAABFUxhdmM2MC4zMS4xMDIgbGlieDI2NAAAAAAAAAAAAAAAGP//AAAALmF2Y0MBQsAK/+EAFmdCwArZHsBEAAADAAQAAAMAKDxImSABAAVoy4PLIAAAABBwYXNwAAAAAQAAAAEAAAAUYnRydAAAAAAAABVIAAAVSAAAABhzdHRzAAAAAAAAAAEAAAAFAAAIAAAAABRzdHNzAAAAAAAAAAEAAAABAAAAHHN0c2MAAAAAAAAAAQAAAAEAAAAFAAAAAQAAAChzdHN6AAAAAAAAAAAAAAAFAAACgwAAAAoAAAAKAAAACQAAAAkAAAAUc3RjbwAAAAAAAAABAAADZwAAAGJ1ZHRhAAAAWm1ldGEAAAAAAAAAIWhkbHIAAAAAAAAAAG1kaXJhcHBsAAAAAAAAAAAAAAAALWlsc3QAAAAlqXRvbwAAAB1kYXRhAAAAAQAAAABMYXZmNjAuMTYuMTAwAAAACGZyZWUAAAKxbWRhdAAAAnAGBf//bNxF6b3m2Ui3lizYINkj7u94MjY0IC0gY29yZSAxNjQgcjMxMDggMzFlMTlmOSAtIEguMjY0L01QRUctNCBBVkMgY29kZWMgLSBDb3B5bGVmdCAyMDAzLTIwMjMgLSBodHRwOi8vd3d3LnZpZGVvbGFuLm9yZy94MjY0Lmh0bWwgLSBvcHRpb25zOiBjYWJhYz0wIHJlZj0zIGRlYmxvY2s9MTowOjAgYW5hbHlzZT0weDE6MHgxMTEgbWU9aGV4IHN1Ym1lPTcgcHN5PTEgcHN5X3JkPTEuMDA6MC4wMCBtaXhlZF9yZWY9MSBtZV9yYW5nZT0xNiBjaHJvbWFfbWU9MSB0cmVsbGlzPTEgOHg4ZGN0PTAgY3FtPTAgZGVhZHpvbmU9MjEsMTEgZmFzdF9wc2tpcD0xIGNocm9tYV9xcF9vZmZzZXQ9LTIgdGhyZWFkcz0xIGxvb2thaGVhZF90aHJlYWRzPTEgc2xpY2VkX3RocmVhZHM9MCBucj0wIGRlY2ltYXRlPTEgaW50ZXJsYWNlZD0wIGJsdXJheV9jb21wYXQ9MCBjb25zdHJhaW5lZF9pbnRyYT0wIGJmcmFtZXM9MCB3ZWlnaHRwPTAga2V5aW50PTI1MCBrZXlpbnRfbWluPTUgc2NlbmVjdXQ9NDAgaW50cmFfcmVmcmVzaD0wIHJjX2xvb2thaGVhZD00MCByYz1jcmYgbWJ0cmVlPTEgY3JmPTIzLjAgcWNvbXA9MC42MCBxcG1pbj0wIHFwbWF4PTY5IHFwc3RlcD00IGlwX3JhdGlvPTEuNDAgYXE9MToxLjAwAIAAAAALZYiEBHyYoAA2I4AAAAAGQZo4CPqAAAAABkGaVAI+oAAAAAVBmmAQ9QAAAAVBmoA/1A==';
+        document.body.appendChild(v); nsVideo = v;
+      }
+      var p = nsVideo.play(); if (p && p.catch) p.catch(function () {});
+    } catch (_) {}
+  }
+  function keepAwake() {
+    if (document.visibilityState !== 'visible') return;
+    try {
+      if (navigator.wakeLock && navigator.wakeLock.request && !wakeLock) {
+        navigator.wakeLock.request('screen').then(function (l) {
+          wakeLock = l;
+          l.addEventListener('release', function () { wakeLock = null; setTimeout(keepAwake, 400); });
+        }).catch(function () { startNoSleep(); });
+      }
+    } catch (_) {}
+    startNoSleep();   // 併用する（画面を触ったあとに動画の再生が始まる）
+  }
+  document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') keepAwake(); });
+  ['pointerup', 'touchend', 'click', 'keydown'].forEach(function (n) {
+    window.addEventListener(n, function () { if (!nsVideo || nsVideo.paused) keepAwake(); else if (!wakeLock) keepAwake(); }, true);
+  });
+  keepAwake();
+
+  /* ---------------- iPhone リモコン接続（room / PeerJS） ---------------- */
+  var LK = { h: null, code: '', count: 0, msg: '', last: '' };
+  var RM = { h: null };
+  function lkUrl() { try { return new URL('remote.html', location.href).href; } catch (_) { return 'remote.html'; } }
+  function paintLink() {
+    if (sheetMode !== 'link') return;
+    var hosting = !!LK.h, room = VT.mode === 'room';
+    $('lkChoose').hidden = hosting; $('lkHost').hidden = !hosting;
+    $('lkCode').textContent = LK.code ? LK.code.replace(/(\d{3})(\d{3})/, '$1 $2') : '------';
+    $('lkState').textContent = LK.msg;
+    $('lkHow').textContent = room
+      ? 'iPhoneで、このアーティファクトを開き、「メニュー」→「リモコン接続」→「リモコンにする」を選んで、上の6桁のコードを入力してください。'
+      : 'iPhoneで下のアドレスを開き、上の6桁のコードを入力してください。';
+    $('lkUrl').textContent = room ? '' : lkUrl(); $('lkShare').hidden = room;
+  }
+  function lkStats() { LK.msg = LK.count ? 'iPhoneが接続中（' + LK.count + '台）' : 'iPhoneの接続待ち'; paintLink(); }
+  function lkSnap() {
+    return { t: 'state', rhythm: S.rhythm, hr: S.hr, spo2: S.spo2, sys: S.sys, dia: S.dia, temp: S.temp, etco2: S.etco2, cpr: S.cpr,
+      vis: S.vis, showName: S.showName, alarms: S.alarms, sound: S.sound, voice: voiceOn, outcome: D.outcome,
+      dst: D.st, msg: $('ctext').textContent, rl: RH.map(function (r) { return r.name; }), ol: OUTCOMES };
+  }
+  function lkPush(force) {
+    if (!LK.h || !LK.count) return;
+    var s = JSON.stringify(lkSnap());
+    if (!force && s === LK.last) return;
+    LK.last = s;
+    LK.h.send(JSON.parse(s));
+  }
+  setInterval(function () { lkPush(false); }, 250);
+  function lkRecv(m) {
+    if (!m || typeof m !== 'object') return;
+    var VK = { hr: 1, spo2: 1, sys: 1, dia: 1, temp: 1, etco2: 1 };
+    switch (m.t) {
+      case 'hello': lkPush(true); break;
+      case 'rh': if (typeof m.i === 'number' && m.i >= 0 && m.i < RH.length) setRhythm(m.i); break;
+      case 'val': if (VK[m.k] && isFinite(+m.v)) setVal(m.k, +m.v); break;
+      case 'vis': if (Object.prototype.hasOwnProperty.call(S.vis, m.k)) { S.vis[m.k] = !!m.v; render(); } break;
+      case 'name': S.showName = !!m.v; render(); break;
+      case 'alarms': S.alarms = !!m.v; render(); break;
+      case 'cpr': S.cpr = !!m.v; render(); break;
+      case 'sound': S.sound = !!m.v; render(); break;
+      case 'voice': voiceOn = !!m.v; if (!voiceOn) { cancelSpeech(); stopTone(); } render(); break;
+      case 'all': Object.keys(S.vis).forEach(function (x) { S.vis[x] = !!m.v; }); S.showName = !!m.v; render(); break;
+      case 'analyze': startAnalyze(); break;
+      case 'shock': doShock(); break;
+      case 'outcome': if (OUTCOMES.some(function (o) { return o[0] === m.v; })) { D.outcome = m.v; render(); } break;
+      case 'reset': resetAll(); break;
+    }
+    lkPush(false);
+  }
+  function lkStart() {
+    if (LK.h) { paintLink(); return; }
+    LK.msg = '準備中…'; LK.code = ''; LK.count = 0; LK.last = '';
+    LK.h = VT.host({
+      onCode: function (c) { LK.code = c; lkStats(); },
+      onMsg: lkRecv,
+      onCount: function (n) { var inc = n > LK.count; LK.count = n; if (inc) { LK.last = ''; lkPush(true); } lkStats(); render(); },
+      onErr: function (t) { LK.msg = t; paintLink(); }
+    });
+    paintLink();
+  }
+  function lkStop() {
+    if (LK.h) LK.h.close();
+    LK.h = null; LK.count = 0; LK.code = ''; LK.msg = ''; LK.last = ''; paintLink(); render();
+  }
+  $('lkStop').addEventListener('click', lkStop);
+  $('lkAsHost').addEventListener('click', lkStart);
+  $('lkAsRemote').addEventListener('click', function () { closeSheet(); openRemoteUI(); });
+  $('lkShare').addEventListener('click', function () {
+    var u = lkUrl();
+    if (navigator.share) { navigator.share({ title: 'バイタルシミュレーター リモコン', url: u }).catch(function () {}); }
+    else { try { navigator.clipboard.writeText(u); toast('アドレスをコピーしました'); } catch (_) {} }
+  });
+  // リモコン画面（iPhone側）：別ページを枠の中に表示し、通信はこのページが仲立ちする
+  function rmPost(m) { var f = $('rmFrame'); try { f.contentWindow.postMessage(m, '*'); } catch (_) {} }
+  function openRemoteUI() { var f = $('rmFrame'); f.srcdoc = RM_DOC; f.hidden = false; }
+  function closeRemoteUI() { if (RM.h) RM.h.close(); RM.h = null; var f = $('rmFrame'); f.hidden = true; f.srcdoc = ''; }
+  window.addEventListener('message', function (e) {
+    var f = $('rmFrame'); if (!f || f.hidden || e.source !== f.contentWindow) return;
+    var d = e.data; if (!d || !d.v) return;
+    if (d.v === 'join') {
+      if (RM.h) RM.h.close();
+      RM.h = VT.join(String(d.code), {
+        onMsg: function (m) { rmPost({ v: 'msg', m: m }); },
+        onLink: function (ok) { rmPost({ v: 'link', ok: ok }); },
+        onErr: function (t, fatal) { rmPost({ v: 'err', t: t, fatal: !!fatal }); }
+      });
+    } else if (d.v === 'send') { if (RM.h) RM.h.send(d.m); }
+    else if (d.v === 'close') closeRemoteUI();
+  });
+
+  var idleT;
+  function wake() { document.body.classList.remove('idle'); clearTimeout(idleT); idleT = setTimeout(function () { document.body.classList.add('idle'); }, 2500); }
+  window.addEventListener('mousemove', wake); wake();
+
+  /* ---------------- main loop ---------------- */
+  var fc = 0, lastSec = -1, heart = $('heart');
+  function frame() {
+    var now = perf(), ts = now - DELAY;
+    gen(now);
+    dTick(now);
+    if (!ecgT.W) { ecgT.resize(); plT.resize(); }
+    draw(ecgT, ts); draw(plT, ts);
+    for (var i = 0; i < bt.length; i++) {
+      var b = bt[i];
+      if (!b.beeped && b.t <= ts) {
+        b.beeped = true;
+        if (ts - b.t < 0.3) {
+          if (S.sound) beep();
+          if (heart.animate) heart.animate([{ transform: 'scale(1.4)' }, { transform: 'scale(1)' }], { duration: 260, easing: 'ease-out' });
+        }
+      }
+    }
+    if (++fc % 30 === 0) {
+      ev = ev.filter(function (e) { return e.t > ts - 1.6; });
+      bt = bt.filter(function (b) { return b.t > ts - 1.8; });
+    }
+    var sec = Math.floor(Date.now() / 1000);
+    if (sec !== lastSec) { lastSec = sec; $('clock').textContent = new Date().toLocaleTimeString('ja-JP', { hour12: false }); }
+    requestAnimationFrame(frame);
+  }
+
+  resetGen(true);
+  render();
+  requestAnimationFrame(frame);
+})();
+</script>
+
+<script>if ('serviceWorker' in navigator && location.protocol !== 'file:') window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js').catch(function () {}); });</script>
+</body></html>

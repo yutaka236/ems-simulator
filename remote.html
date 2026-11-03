@@ -1,0 +1,416 @@
+<!doctype html>
+<html lang="ja"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="リモコン">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="theme-color" content="#04080a">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<title>バイタルシミュレーター リモコン</title>
+<style>
+:root { --bg:#04080a; --panel:#091216; --line:#17292f; --fg:#e9f4f1; --dim:#7b959b; --hr:#4dff8a; --spo2:#3fd8ff; --bp:#ff7466; --temp:#ffcf3a; --etco2:#c58bff; --alarm:#ff2f41; color-scheme: dark; }
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; background: var(--bg); color: var(--fg); font-family: 'Hiragino Sans', 'Noto Sans JP', system-ui, sans-serif; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; overscroll-behavior: none; }
+body { padding: max(12px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) max(28px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left)); max-width: 640px; margin: 0 auto; }
+button { appearance: none; font: inherit; color: var(--fg); background: #10222a; border: 1px solid #33505a; min-height: 52px; padding: 0 12px; font-weight: 700; font-size: 17px; touch-action: manipulation; cursor: pointer; }
+button:active { filter: brightness(1.4); }
+button:disabled { opacity: 0.3; }
+button.on { color: var(--c, var(--hr)); border-color: var(--c, var(--hr)); background: color-mix(in srgb, var(--c, var(--hr)) 14%, #0b171c); }
+h2 { margin: 22px 0 8px; font-size: 14px; color: var(--dim); font-weight: 500; letter-spacing: 0.08em; }
+.bar { display: flex; align-items: center; gap: 10px; padding: 8px 0; font-size: 15px; color: var(--dim); }
+.dot { width: 10px; height: 10px; border-radius: 50%; background: var(--alarm); flex: none; }
+.dot.ok { background: var(--hr); }
+#connect { padding-top: 14vh; text-align: center; }
+#connect h1 { font-size: 24px; margin: 0 0 8px; }
+#connect p { color: var(--dim); font-size: 15px; line-height: 1.6; margin: 0 0 22px; }
+#codeIn { width: 100%; font: 600 44px/1.2 'Barlow Condensed', 'Arial Narrow', sans-serif; letter-spacing: 0.25em; text-align: center; background: #04080a; color: var(--hr); border: 2px solid #33505a; padding: 10px; margin-bottom: 14px; -webkit-user-select: text; user-select: text; }
+#go { width: 100%; min-height: 60px; font-size: 20px; background: var(--hr); color: #04080a; border-color: var(--hr); }
+#err { color: var(--alarm); min-height: 3em; margin-top: 14px; font-size: 15px; line-height: 1.5; }
+#ctl[hidden], #connect[hidden], #sheet[hidden] { display: none; }
+.msg { min-height: 2.6em; display: flex; align-items: center; font-size: 17px; font-weight: 700; line-height: 1.4; padding: 6px 2px; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.big { min-height: 76px; font-size: 24px; letter-spacing: 0.08em; }
+#bA { --c: var(--spo2); color: var(--spo2); border: 2px solid var(--spo2); background: transparent; }
+#bS { --c: var(--temp); color: var(--temp); border: 2px solid var(--temp); background: transparent; }
+#bC { --c: #ff9f43; color: #ff9f43; border: 2px solid #ff9f43; background: transparent; min-height: 64px; font-size: 22px; letter-spacing: 0.08em; width: 100%; margin-top: 10px; }
+#bC.on { background: #ff9f43; color: #1a0e00; }
+#bS.ready { background: var(--temp); color: #1a1300; animation: pulse 0.9s steps(1) infinite; }
+@keyframes pulse { 50% { filter: brightness(0.62); } }
+.row { display: grid; grid-template-columns: 62px minmax(0, 1fr) auto; gap: 6px; align-items: center; background: var(--panel); border: 1px solid var(--line); padding: 8px 8px 8px 12px; margin-bottom: 8px; color: var(--c); }
+.row .lab { font-weight: 700; font-size: 15px; line-height: 1.2; }
+.row .lab small { display: block; color: var(--dim); font-weight: 500; font-size: 12px; }
+.vals { display: flex; gap: 6px; justify-content: flex-end; min-width: 0; }
+.vals button { min-width: 0; flex: 1 1 0; max-width: 92px; padding: 0 4px; min-height: 56px; font: 600 32px/1 'Barlow Condensed', 'Arial Narrow', sans-serif; color: var(--c); background: #04080a; font-variant-numeric: tabular-nums; }
+.vals .sl { align-self: center; color: var(--dim); }
+.tg { min-width: 62px; min-height: 56px; font-size: 13px; padding: 0 6px; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.grid2 button { min-height: 58px; text-align: left; line-height: 1.3; font-size: 15px; }
+.chips { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.chips button { min-height: 56px; font-size: 15px; white-space: pre-line; line-height: 1.3; }
+.danger { color: var(--alarm); border-color: var(--alarm); }
+#sheet { position: fixed; left: 0; right: 0; bottom: 0; z-index: 10; background: #0b171c; border-top: 2px solid var(--c, #33505a); padding: 12px 14px max(14px, env(safe-area-inset-bottom)); max-width: 640px; margin: 0 auto; box-shadow: 0 -12px 40px rgba(0,0,0,0.6); }
+#sh { display: flex; align-items: baseline; gap: 10px; font-size: 20px; color: var(--c); margin-bottom: 8px; }
+#sh small { color: var(--dim); font-size: 14px; }
+#shX { margin-left: auto; min-height: 40px; }
+#disp { font: 600 54px/1 'Barlow Condensed', 'Arial Narrow', sans-serif; text-align: right; padding: 8px 14px; background: #04080a; border: 1px solid var(--line); color: var(--c); min-height: 70px; margin-bottom: 8px; font-variant-numeric: tabular-nums; }
+#disp.cur { opacity: 0.55; }
+.pad { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.pad button { min-height: 54px; font: 600 28px/1 'Barlow Condensed', 'Arial Narrow', sans-serif; }
+.pad .ok { grid-column: span 2; background: var(--c); color: #04080a; border-color: var(--c); font-family: inherit; font-size: 18px; }
+.pad .st { font-size: 22px; }
+</style></head>
+<body>
+<section id="connect">
+  <h1>バイタルシミュレーター リモコン</h1>
+  <p>iPadの「メニュー」→「リモコン接続」に表示された<br>6桁のコードを入力してください。</p>
+  <input id="codeIn" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="000000" autocomplete="off">
+  <button id="go" type="button">接続</button>
+  <div id="err"></div>
+  <button id="back" type="button" hidden style="margin-top:18px;width:100%">戻る</button>
+</section>
+
+<section id="ctl" hidden>
+  <div class="bar"><span class="dot" id="dot"></span><span id="stat">接続中</span><button id="exit" type="button" hidden style="margin-left:auto;min-height:40px;font-size:14px">終了</button></div>
+  <div class="msg" id="msg"></div>
+  <div class="two">
+    <button class="big" id="bA" type="button">解析</button>
+    <button class="big" id="bS" type="button" disabled>除細動</button>
+  </div>
+  <button id="bC" type="button">胸骨圧迫</button>
+
+  <h2>バイタルサイン（数値をタップして変更）</h2>
+  <div id="rows"></div>
+
+  <h2>表示の切り替え</h2>
+  <div class="chips" id="vis"></div>
+
+  <h2>心電図のリズム</h2>
+  <div class="grid2" id="rh"></div>
+
+  <h2>除細動後の結果</h2>
+  <div class="chips" id="oc" style="grid-template-columns:1fr"></div>
+
+  <h2>設定</h2>
+  <div class="chips" id="set"></div>
+</section>
+
+<div id="sheet" hidden>
+  <div id="sh"><b id="shN"></b><small id="shU"></small><button id="shX" type="button">✕</button></div>
+  <div id="disp"></div>
+  <div class="pad" id="pad"></div>
+</div>
+
+<script>
+/*VT_BEGIN*/
+var VT = (function () {
+  var roomP = null;
+  function getRoom() {
+    if (!roomP) {
+      roomP = (window.claude && typeof window.claude.use === 'function')
+        ? Promise.race([window.claude.use('room'), new Promise(function (r) { setTimeout(function () { r(null); }, 3000); })]).catch(function () { return null; })
+        : Promise.resolve(null);
+    }
+    return roomP;
+  }
+  function loadPeer(ok, ng) {
+    if (window.Peer) return ok();
+    var s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js';
+    s.onload = ok; s.onerror = ng; document.head.appendChild(s);
+  }
+  function wrap(start) {
+    var h = null, closed = false;
+    start(function (hh) { h = hh; if (closed) hh.close(); });
+    return { send: function (m) { if (h) h.send(m); }, close: function () { closed = true; if (h) h.close(); } };
+  }
+
+  /* ---- room（アーティファクトの共有機能） ---- */
+  function roomOpen(R, role, code, o) {
+    var closed = false, nr = null, offs = [], want = role === 'host' ? 'remote' : 'host', timer = null, seen = false;
+    R.join('vsim' + code).then(function (r) {
+      if (closed) { r.leave(); return; }
+      nr = r;
+      r.presence({ role: role });
+      offs.push(r.on(role === 'host' ? 'c' : 's', function (msg) { if (!msg.sameTab) o.onMsg(msg.data); }));
+      offs.push(r.onPeers(function (ch) {
+        var n = ch.peers.filter(function (p) { return !p.sameTab && p.presence && p.presence.role === want; }).length;
+        if (n > 0) { seen = true; clearTimeout(timer); }
+        o.onCount(n);
+      }));
+      if (o.onReady) o.onReady();
+      if (role === 'remote') timer = setTimeout(function () { if (!seen) o.onErr('接続できません。コードが違うか、iPad側で「表示側にする」が開かれていません', true); }, 10000);
+    }).catch(function (e) { o.onErr('接続できません（' + ((e && e.code) || '不明') + '）', true); });
+    return {
+      send: function (m) {
+        if (!nr) return;
+        nr.emit(role === 'host' ? 's' : 'c', m).catch(function (e) { if (e && e.code === 'not_permitted') o.onErr('この端末には操作の権限がありません', false); });
+      },
+      close: function () { closed = true; clearTimeout(timer); offs.forEach(function (f) { try { f(); } catch (_) {} }); if (nr) nr.leave().catch(function () {}); }
+    };
+  }
+
+  /* ---- PeerJS（WebRTC）：アーティファクト外（Webに置いたとき）用 ---- */
+  function peerHost(o) {
+    var p = null, conns = [], closed = false;
+    function begin() {
+      loadPeer(function () {
+        if (closed) return;
+        var code = String(Math.floor(100000 + Math.random() * 900000));
+        p = new window.Peer('vsim-' + code);
+        p.on('open', function () { o.onCode(code); });
+        p.on('connection', function (c) {
+          c.on('open', function () { conns.push(c); o.onCount(conns.length); });
+          c.on('data', o.onMsg);
+          var drop = function () { conns = conns.filter(function (x) { return x !== c; }); o.onCount(conns.length); };
+          c.on('close', drop); c.on('error', drop);
+        });
+        p.on('error', function (e) {
+          if (e && e.type === 'unavailable-id') { try { p.destroy(); } catch (_) {} begin(); return; }
+          o.onErr('接続できません（' + ((e && e.type) || '不明') + '）。ネットワークを確認してください', false);
+        });
+        p.on('disconnected', function () { try { p.reconnect(); } catch (_) {} });
+      }, function () { o.onErr('通信用の部品を読み込めません。ネットワークを確認してください', false); });
+    }
+    begin();
+    return {
+      send: function (m) { conns.forEach(function (c) { try { if (c.open) c.send(m); } catch (_) {} }); },
+      close: function () { closed = true; try { conns.forEach(function (c) { c.close(); }); if (p) p.destroy(); } catch (_) {} }
+    };
+  }
+  function peerJoin(code, o) {
+    var p = null, c = null, timer = null, retry = null, closed = false, linked = false;
+    function open() {
+      loadPeer(function () {
+        if (closed) return;
+        try { if (p) p.destroy(); } catch (_) {}
+        p = new window.Peer();
+        p.on('open', dial);
+        p.on('error', function (e) {
+          var ty = e && e.type;
+          if (ty === 'peer-unavailable') o.onErr('接続できません。コードが違うか、iPad側の「リモコン接続」画面が開かれていません', true);
+          else if (linked) lostLink();
+          else o.onErr('通信エラーです（' + (ty || '不明') + '）。ネットワークを確認してください。会場のWi-Fiでつながらないときは、iPhoneのテザリングにiPadをつないでください', true);
+        });
+      }, function () { o.onErr('通信用の部品を読み込めません。ネットワークを確認してください', true); });
+    }
+    function dial() {
+      c = p.connect('vsim-' + code, { serialization: 'json', reliable: true });
+      c.on('open', function () { clearTimeout(timer); linked = true; o.onLink(true); });
+      c.on('data', o.onMsg); c.on('close', lostLink); c.on('error', lostLink);
+      clearTimeout(timer);
+      timer = setTimeout(function () { if (!linked) o.onErr('接続できません。時間がかかっています。ネットワークを確認してください', true); }, 15000);
+    }
+    function lostLink() {
+      if (closed) return;
+      var was = linked; linked = false; if (was) o.onLink(false);
+      clearTimeout(retry); retry = setTimeout(open, 2000);
+    }
+    open();
+    return {
+      send: function (m) { try { if (c && c.open) c.send(m); } catch (_) {} },
+      close: function () { closed = true; clearTimeout(timer); clearTimeout(retry); try { if (p) p.destroy(); } catch (_) {} }
+    };
+  }
+
+  var VT = { mode: null };
+  // 表示側（iPad）：o = { onCode, onMsg, onCount, onErr }
+  VT.host = function (o) {
+    return wrap(function (set) {
+      getRoom().then(function (R) {
+        VT.mode = R ? 'room' : 'peer';
+        if (!R) { set(peerHost(o)); return; }
+        var code = String(Math.floor(100000 + Math.random() * 900000));
+        set(roomOpen(R, 'host', code, { onMsg: o.onMsg, onCount: o.onCount, onErr: o.onErr, onReady: function () { o.onCode(code); } }));
+      });
+    });
+  };
+  // リモコン側（iPhone）：o = { onMsg, onLink, onErr }
+  VT.join = function (code, o) {
+    return wrap(function (set) {
+      getRoom().then(function (R) {
+        VT.mode = R ? 'room' : 'peer';
+        if (!R) { set(peerJoin(code, o)); return; }
+        var linked = false;
+        set(roomOpen(R, 'remote', code, { onMsg: o.onMsg, onErr: o.onErr, onCount: function (n) {
+          if (n > 0 && !linked) { linked = true; o.onLink(true); } else if (n === 0 && linked) { linked = false; o.onLink(false); }
+        } }));
+      });
+    });
+  };
+  return VT;
+})();
+
+/*VT_END*/
+</script>
+<script>
+(function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+  var st = null, link = null, resetArm = 0, bound = false;
+  var EMB = window.parent !== window;   // iPad側ページの中に表示されているとき
+  var COL = { hr: 'var(--hr)', spo2: 'var(--spo2)', bp: 'var(--bp)', temp: 'var(--temp)', etco2: 'var(--etco2)' };
+  var TN = { hr: ['脈拍', '/min', 'hr'], spo2: ['SpO₂', '%', 'spo2'], sys: ['血圧 収縮期', 'mmHg', 'bp'], dia: ['血圧 拡張期', 'mmHg', 'bp'], temp: ['体温', '℃', 'temp'], etco2: ['EtCO₂', 'mmHg', 'etco2'] };
+
+  function send(m) { if (link) link.send(m); }
+  function store(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (_) {} return null; }
+  function fail(t) {
+    $('ctl').hidden = true; $('connect').hidden = false; $('err').textContent = t; $('go').disabled = false;
+    if (link) { link.close(); link = null; }
+  }
+  function onMsg(m) { if (m && m.t === 'state') { st = m; render(); } }
+  function onLink(ok) {
+    if (ok) { $('connect').hidden = true; $('ctl').hidden = false; $('go').disabled = false; setLink(true); send({ t: 'hello' }); }
+    else if (!$('ctl').hidden) setLink(false);
+  }
+  function onErr(t, fatal) { if (fatal || $('ctl').hidden) fail(t); else $('stat').textContent = t; }
+  function joinLink(code) {
+    if (!EMB) return VT.join(code, { onMsg: onMsg, onLink: onLink, onErr: onErr });
+    if (!bound) {
+      bound = true;
+      window.addEventListener('message', function (e) {
+        var d = e.data; if (!d || !d.v || e.source !== window.parent) return;
+        if (d.v === 'msg') onMsg(d.m); else if (d.v === 'link') onLink(d.ok); else if (d.v === 'err') onErr(d.t, d.fatal);
+      });
+    }
+    window.parent.postMessage({ v: 'join', code: code }, '*');
+    return { send: function (m) { window.parent.postMessage({ v: 'send', m: m }, '*'); }, close: function () {} };
+  }
+  function start() {
+    var code = $('codeIn').value.replace(/\D/g, '');
+    if (code.length !== 6) { $('err').textContent = '6桁のコードを入力してください'; return; }
+    store('vsim-code', code); $('err').textContent = '接続中…'; $('go').disabled = true;
+    if (link) link.close();
+    link = joinLink(code);
+  }
+  function setLink(ok) { $('dot').className = 'dot' + (ok ? ' ok' : ''); $('stat').textContent = ok ? 'iPadに接続中' : '切断されました。再接続中…'; }
+  function exitEmb() { if (link) link.close(); link = null; window.parent.postMessage({ v: 'close' }, '*'); }
+
+  /* ---- 画面の組み立て ---- */
+  function btn(parent, text, fn, cls) {
+    var b = document.createElement('button'); b.type = 'button'; b.textContent = text; if (cls) b.className = cls;
+    b.addEventListener('click', fn); parent.appendChild(b); return b;
+  }
+  var built = false, B = {};
+  function build() {
+    built = true;
+    var rows = $('rows');
+    [['hr', ['hr']], ['spo2', ['spo2']], ['bp', ['sys', 'dia']], ['temp', ['temp']], ['etco2', ['etco2']]].forEach(function (r) {
+      var tile = r[0], div = document.createElement('div'); div.className = 'row'; div.style.setProperty('--c', COL[tile]);
+      var lab = document.createElement('div'); lab.className = 'lab';
+      lab.innerHTML = (tile === 'bp' ? '血圧' : TN[tile][0]) + '<small>' + (tile === 'bp' ? 'mmHg' : TN[tile][1]) + '</small>';
+      var vals = document.createElement('div'); vals.className = 'vals';
+      r[1].forEach(function (k, i) {
+        if (i) { var sl = document.createElement('span'); sl.className = 'sl'; sl.textContent = '/'; vals.appendChild(sl); }
+        B[k] = btn(vals, '', function () { openPad(k); });
+      });
+      B['tg_' + tile] = btn(div, '', function () { send({ t: 'vis', k: tile, v: !st.vis[tile] }); st.vis[tile] = !st.vis[tile]; render(); }, 'tg');
+      div.insertBefore(lab, div.firstChild); div.insertBefore(vals, B['tg_' + tile]);
+      rows.appendChild(div);
+    });
+    B.bA = $('bA'); B.bS = $('bS'); B.bC = $('bC');
+    $('bC').addEventListener('click', function () { st.cpr = !st.cpr; send({ t: 'cpr', v: st.cpr }); render(); });
+    $('bA').addEventListener('click', function () { send({ t: 'analyze' }); });
+    $('bS').addEventListener('click', function () { send({ t: 'shock' }); });
+    var vis = $('vis');
+    B.v_ecg = btn(vis, '心電図', function () { tog('ecg'); });
+    B.v_pleth = btn(vis, 'カプノグラム', function () { tog('pleth'); });
+    B.v_name = btn(vis, 'リズム名', function () { st.showName = !st.showName; send({ t: 'name', v: st.showName }); render(); });
+    btn(vis, 'すべて表示', function () { send({ t: 'all', v: true }); });
+    btn(vis, 'すべて非表示', function () { send({ t: 'all', v: false }); });
+    var set = $('set');
+    B.s_alarms = btn(set, '警報表示', function () { st.alarms = !st.alarms; send({ t: 'alarms', v: st.alarms }); render(); });
+    B.s_sound = btn(set, '心拍音', function () { st.sound = !st.sound; send({ t: 'sound', v: st.sound }); render(); });
+    B.s_voice = btn(set, '音声ガイド', function () { st.voice = !st.voice; send({ t: 'voice', v: st.voice }); render(); });
+    B.reset = btn(set, '初期値に戻す', function () {
+      if (Date.now() - resetArm < 3000) { resetArm = 0; send({ t: 'reset' }); } else { resetArm = Date.now(); setTimeout(render, 3100); }
+      render();
+    }, 'danger');
+    B.reset.style.gridColumn = '1 / -1';
+  }
+  function tog(k) { st.vis[k] = !st.vis[k]; send({ t: 'vis', k: k, v: st.vis[k] }); render(); }
+  function fmt(k, v) { return k === 'temp' ? Number(v).toFixed(1) : String(v); }
+
+  function render() {
+    if (!st) return;
+    if (!built) build();
+    $('msg').textContent = st.msg || '待機中';
+    var d = st.dst;
+    B.bA.disabled = d === 'analyzing' || d === 'charging';
+    B.bS.disabled = d !== 'ready'; B.bS.classList.toggle('ready', d === 'ready');
+    B.bC.textContent = '胸骨圧迫　' + (st.cpr ? 'ON' : 'OFF'); B.bC.classList.toggle('on', !!st.cpr);
+    ['hr', 'spo2', 'sys', 'dia', 'temp', 'etco2'].forEach(function (k) { B[k].textContent = fmt(k, st[k]); });
+    ['hr', 'spo2', 'bp', 'temp', 'etco2'].forEach(function (t) {
+      var b = B['tg_' + t], on = !!st.vis[t]; b.textContent = on ? '表示中' : '非表示'; b.classList.toggle('on', on); b.style.setProperty('--c', COL[t]);
+    });
+    function on(b, v, label) { b.textContent = label + '\n' + (v ? '表示中' : '非表示'); b.classList.toggle('on', !!v); }
+    on(B.v_ecg, st.vis.ecg, '心電図'); on(B.v_pleth, st.vis.pleth, 'カプノグラム'); on(B.v_name, st.showName, 'リズム名');
+    B.s_alarms.textContent = '警報表示\n' + (st.alarms ? 'ON' : 'OFF'); B.s_alarms.classList.toggle('on', !!st.alarms);
+    B.s_sound.textContent = '心拍音\n' + (st.sound ? 'ON' : 'OFF'); B.s_sound.classList.toggle('on', !!st.sound);
+    B.s_voice.textContent = '音声ガイド\n' + (st.voice ? 'ON' : 'OFF'); B.s_voice.classList.toggle('on', !!st.voice);
+    B.reset.textContent = Date.now() - resetArm < 3000 ? 'もう一度タップで初期化' : '初期値に戻す';
+    // リズム・結果の一覧は、iPad側の内容に合わせて作る
+    var rh = $('rh'), key = JSON.stringify(st.rl);
+    if (rh.dataset.k !== key) {
+      rh.dataset.k = key; rh.textContent = ''; B.rh = [];
+      st.rl.forEach(function (n, i) { B.rh.push(btn(rh, n, function () { send({ t: 'rh', i: i }); })); });
+    }
+    B.rh.forEach(function (b, i) { b.classList.toggle('on', i === st.rhythm); });
+    var oc = $('oc'), ok = JSON.stringify(st.ol);
+    if (oc.dataset.k !== ok) {
+      oc.dataset.k = ok; oc.textContent = ''; B.oc = [];
+      st.ol.forEach(function (o) { var b = btn(oc, o[1], function () { send({ t: 'outcome', v: o[0] }); st.outcome = o[0]; render(); }); b.dataset.id = o[0]; B.oc.push(b); });
+    }
+    B.oc.forEach(function (b) { b.classList.toggle('on', b.dataset.id === st.outcome); });
+    if (cur) paintPad();
+  }
+
+  /* ---- テンキー ---- */
+  var cur = null, entry = null;
+  ['7', '8', '9', '−10', '4', '5', '6', '−1', '1', '2', '3', '＋1', 'bs', '0', '.', '＋10'].forEach(function (ch) {
+    var b = document.createElement('button'); b.type = 'button'; b.textContent = ch === 'bs' ? '⌫' : ch;
+    if (/^[−＋]/.test(ch)) b.className = 'st';
+    b.addEventListener('click', function () { padKey(ch); }); $('pad').appendChild(b);
+    if (ch === '.') b.id = 'dotKey';
+  });
+  var okb = document.createElement('button'); okb.type = 'button'; okb.className = 'ok'; okb.textContent = '確定';
+  okb.addEventListener('click', function () { commit(); closePad(); }); $('pad').appendChild(okb);
+  var cb = document.createElement('button'); cb.type = 'button'; cb.textContent = '取消'; cb.style.gridColumn = 'span 2';
+  cb.addEventListener('click', closePad); $('pad').appendChild(cb);
+  $('shX').addEventListener('click', closePad);
+
+  function openPad(k) { cur = k; entry = null; $('sheet').hidden = false; $('sheet').style.setProperty('--c', COL[TN[k][2]]); $('shN').textContent = TN[k][0]; $('shU').textContent = TN[k][1]; paintPad(); }
+  function closePad() { cur = null; entry = null; $('sheet').hidden = true; }
+  function paintPad() {
+    var d = $('disp'); d.textContent = entry !== null ? (entry || '–') : fmt(cur, st[cur]); d.classList.toggle('cur', entry === null);
+    $('dotKey').disabled = cur !== 'temp';
+  }
+  function commit() {
+    if (entry === null || entry === '' || entry === '.') { entry = null; return; }
+    var v = (cur === 'temp' && entry.indexOf('.') < 0 && entry.length >= 3) ? parseFloat(entry.slice(0, -1) + '.' + entry.slice(-1)) : parseFloat(entry);
+    entry = null; if (isFinite(v)) { send({ t: 'val', k: cur, v: v }); st[cur] = v; }
+  }
+  function padKey(ch) {
+    if (/^[−＋]/.test(ch)) {
+      commit();
+      var big = /10|1\.0/.test(ch) && ch.indexOf('10') >= 0, sign = ch.charAt(0) === '＋' ? 1 : -1;
+      var step = cur === 'temp' ? (big ? 1 : 0.1) : (big ? 10 : 1);
+      var v = Math.round((Number(st[cur]) + sign * step) * 10) / 10; st[cur] = v; send({ t: 'val', k: cur, v: v }); paintPad(); render(); return;
+    }
+    if (entry === null) entry = '';
+    if (ch === 'bs') entry = entry.slice(0, -1);
+    else if (ch === '.') { if (cur === 'temp' && entry.indexOf('.') < 0) entry += '.'; }
+    else if (entry.length < 5) entry += ch;
+    paintPad();
+  }
+
+  if (EMB) { $('back').hidden = false; $('exit').hidden = false; $('back').addEventListener('click', exitEmb); $('exit').addEventListener('click', exitEmb); }
+  $('go').addEventListener('click', start);
+  $('codeIn').addEventListener('keydown', function (e) { if (e.key === 'Enter') start(); });
+  var last = store('vsim-code'); if (last) $('codeIn').value = last;
+  ['gesturestart', 'gesturechange', 'gestureend'].forEach(function (n) { document.addEventListener(n, function (e) { e.preventDefault(); }); });
+  window.__remote = { get st() { return st; } };
+})();
+</script>
+</body></html>
