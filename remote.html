@@ -36,6 +36,9 @@ h2 { margin: 22px 0 8px; font-size: 14px; color: var(--dim); font-weight: 500; l
 #bS { --c: var(--temp); color: var(--temp); border: 2px solid var(--temp); background: transparent; }
 #bC { --c: #ff9f43; color: #ff9f43; border: 2px solid #ff9f43; background: transparent; min-height: 64px; font-size: 22px; letter-spacing: 0.08em; width: 100%; margin-top: 10px; }
 #bC.on { background: #ff9f43; color: #1a0e00; }
+#cprInfo { display: flex; justify-content: space-between; gap: 8px; margin-top: 8px; padding: 8px 12px; background: var(--panel); border: 1px solid var(--line); font-size: 15px; color: var(--dim); }
+#cprInfo b { font: 600 26px/1 'Barlow Condensed', 'Arial Narrow', sans-serif; color: var(--fg); font-variant-numeric: tabular-nums; margin-left: 4px; }
+#cprInfo.warn #cpNow b { color: var(--alarm); }
 #bS.ready { background: var(--temp); color: #1a1300; animation: pulse 0.9s steps(1) infinite; }
 @keyframes pulse { 50% { filter: brightness(0.62); } }
 .row { display: grid; grid-template-columns: 62px minmax(0, 1fr) auto; gap: 6px; align-items: center; background: var(--panel); border: 1px solid var(--line); padding: 8px 8px 8px 12px; margin-bottom: 8px; color: var(--c); }
@@ -79,6 +82,7 @@ h2 { margin: 22px 0 8px; font-size: 14px; color: var(--dim); font-weight: 500; l
     <button class="big" id="bS" type="button" disabled>除細動</button>
   </div>
   <button id="bC" type="button">胸骨圧迫</button>
+  <div id="cprInfo"><span id="cpNow">中断時間 <b>—</b></span><span id="cpLast">前回の中断 <b>—</b></span></div>
 
   <h2>バイタルサイン（数値をタップして変更）</h2>
   <div id="rows"></div>
@@ -324,7 +328,7 @@ var VT = (function () {
     B.s_sound = btn(set, '心拍音', function () { st.sound = !st.sound; send({ t: 'sound', v: st.sound }); render(); });
     B.s_voice = btn(set, '音声ガイド', function () { st.voice = !st.voice; send({ t: 'voice', v: st.voice }); render(); });
     B.reset = btn(set, '初期値に戻す', function () {
-      if (Date.now() - resetArm < 3000) { resetArm = 0; send({ t: 'reset' }); } else { resetArm = Date.now(); setTimeout(render, 3100); }
+      if (Date.now() - resetArm < 3000) { resetArm = 0; cp = { prev: false, offAt: 0, last: null }; send({ t: 'reset' }); } else { resetArm = Date.now(); setTimeout(render, 3100); }
       render();
     }, 'danger');
     B.reset.style.gridColumn = '1 / -1';
@@ -332,8 +336,29 @@ var VT = (function () {
   function tog(k) { st.vis[k] = !st.vis[k]; send({ t: 'vis', k: k, v: st.vis[k] }); render(); }
   function fmt(k, v) { return k === 'temp' ? Number(v).toFixed(1) : String(v); }
 
+  /* 胸骨圧迫の中断時間（OFFになってから次にONになるまで） */
+  var cp = { prev: null, offAt: 0, last: null };
+  function cpTrack() {
+    var on = !!st.cpr;
+    if (cp.prev !== null && on !== cp.prev) {
+      if (!on) cp.offAt = Date.now();
+      else if (cp.offAt) { cp.last = (Date.now() - cp.offAt) / 1000; cp.offAt = 0; }
+    }
+    if (cp.prev === null && !on) cp.offAt = 0;
+    cp.prev = on;
+  }
+  function cpPaint() {
+    if (!st) return;
+    var live = cp.offAt ? (Date.now() - cp.offAt) / 1000 : null;
+    $('cpNow').innerHTML = '中断時間 <b>' + (live === null ? '—' : live.toFixed(1) + '秒') + '</b>';
+    $('cpLast').innerHTML = '前回の中断 <b>' + (cp.last === null ? '—' : cp.last.toFixed(1) + '秒') + '</b>';
+    $('cprInfo').classList.toggle('warn', live !== null && live >= 10);
+  }
+  setInterval(cpPaint, 200);
+
   function render() {
     if (!st) return;
+    cpTrack();
     if (!built) build();
     $('msg').textContent = st.msg || '待機中';
     var d = st.dst;
