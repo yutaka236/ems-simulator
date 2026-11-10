@@ -23,7 +23,8 @@ h2 { margin: 22px 0 8px; font-size: 14px; color: var(--dim); font-weight: 500; l
 .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--alarm); flex: none; }
 .dot.ok { background: var(--hr); }
 #connect { padding-top: 14vh; text-align: center; }
-#connect h1 { font-size: 24px; margin: 0 0 8px; }
+#connect h1 { white-space: nowrap; font-size: min(24px, calc((100vw - 32px) / 16.5)); margin: 0 0 8px; }
+#connect p#hint { white-space: nowrap; font-size: min(15px, calc((100vw - 32px) / 40.5)); line-height: 1.5; }
 #connect p { color: var(--dim); font-size: 15px; line-height: 1.6; margin: 0 0 22px; }
 #codeIn { width: 100%; font: 600 44px/1.2 'Barlow Condensed', 'Arial Narrow', sans-serif; letter-spacing: 0.25em; text-align: center; background: #04080a; color: var(--hr); border: 2px solid #33505a; padding: 10px; margin-bottom: 14px; -webkit-user-select: text; user-select: text; }
 #go { width: 100%; min-height: 60px; font-size: 20px; background: var(--hr); color: #04080a; border-color: var(--hr); }
@@ -67,7 +68,7 @@ h2 { margin: 22px 0 8px; font-size: 14px; color: var(--dim); font-weight: 500; l
 <body>
 <section id="connect">
   <h1>バイタルシミュレーター リモコン</h1>
-  <p>iPadの「メニュー」→「リモコン接続」に表示された<br>6桁のコードを入力してください。</p>
+  <p id="hint">iPadの「メニュー」→「リモコン接続」に表示された6桁のコードを入力してください。</p>
   <input id="codeIn" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="000000" autocomplete="off">
   <button id="go" type="button">接続</button>
   <div id="err"></div>
