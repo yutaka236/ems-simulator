@@ -48,10 +48,10 @@ h2 { margin: 22px 0 8px; font-size: 14px; color: var(--dim); font-weight: 500; l
 .vals button { min-width: 0; flex: 1 1 0; max-width: 92px; padding: 0 4px; min-height: 56px; font: 600 32px/1 'Barlow Condensed', 'Arial Narrow', sans-serif; color: var(--c); background: #04080a; font-variant-numeric: tabular-nums; }
 .vals .sl { align-self: center; color: var(--dim); }
 .tg { min-width: 62px; min-height: 56px; font-size: 13px; padding: 0 6px; }
-.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.grid2 button { min-height: 58px; text-align: left; line-height: 1.3; font-size: 15px; }
-.chips { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-.chips button { min-height: 56px; font-size: 15px; white-space: pre-line; line-height: 1.3; }
+.grid2 { display: grid; grid-template-columns: 1fr; gap: 8px; }
+.grid2 button { min-height: 52px; text-align: left; line-height: 1.3; font-size: 16px; white-space: nowrap; padding: 0 14px; }
+.chips { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.chips button { min-height: 52px; font-size: 15px; white-space: nowrap; line-height: 1.3; padding: 0 6px; }
 .danger { color: var(--alarm); border-color: var(--alarm); }
 #sheet { position: fixed; left: 0; right: 0; bottom: 0; z-index: 10; background: #0b171c; border-top: 2px solid var(--c, #33505a); padding: 12px 14px max(14px, env(safe-area-inset-bottom)); max-width: 640px; margin: 0 auto; box-shadow: 0 -12px 40px rgba(0,0,0,0.6); }
 #sh { display: flex; align-items: baseline; gap: 10px; font-size: 20px; color: var(--c); margin-bottom: 8px; }
@@ -369,11 +369,11 @@ var VT = (function () {
     ['hr', 'spo2', 'bp', 'temp', 'etco2'].forEach(function (t) {
       var b = B['tg_' + t], on = !!st.vis[t]; b.textContent = on ? '表示中' : '非表示'; b.classList.toggle('on', on); b.style.setProperty('--c', COL[t]);
     });
-    function on(b, v, label) { b.textContent = label + '\n' + (v ? '表示中' : '非表示'); b.classList.toggle('on', !!v); }
+    function on(b, v, label) { b.textContent = label + '　' + (v ? '表示中' : '非表示'); b.classList.toggle('on', !!v); }
     on(B.v_ecg, st.vis.ecg, '心電図'); on(B.v_pleth, st.vis.pleth, 'カプノグラム'); on(B.v_name, st.showName, 'リズム名');
-    B.s_alarms.textContent = '警報表示\n' + (st.alarms ? 'ON' : 'OFF'); B.s_alarms.classList.toggle('on', !!st.alarms);
-    B.s_sound.textContent = '心拍音\n' + (st.sound ? 'ON' : 'OFF'); B.s_sound.classList.toggle('on', !!st.sound);
-    B.s_voice.textContent = '音声ガイド\n' + (st.voice ? 'ON' : 'OFF'); B.s_voice.classList.toggle('on', !!st.voice);
+    B.s_alarms.textContent = '警報表示　' + (st.alarms ? 'ON' : 'OFF'); B.s_alarms.classList.toggle('on', !!st.alarms);
+    B.s_sound.textContent = '心拍音　' + (st.sound ? 'ON' : 'OFF'); B.s_sound.classList.toggle('on', !!st.sound);
+    B.s_voice.textContent = '音声ガイド　' + (st.voice ? 'ON' : 'OFF'); B.s_voice.classList.toggle('on', !!st.voice);
     B.reset.textContent = Date.now() - resetArm < 3000 ? 'もう一度タップで初期化' : '初期値に戻す';
     // リズム・結果の一覧は、iPad側の内容に合わせて作る
     var rh = $('rh'), key = JSON.stringify(st.rl);
